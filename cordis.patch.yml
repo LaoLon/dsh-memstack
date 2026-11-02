@@ -1,0 +1,6 @@
+- insert:
+    - id: memstack
+      name: '@local/memstack'
+      config:
+        injectIndex: true
+        indexByteBudget: 4096

@@ -1,0 +1,32 @@
+{
+  "name": "@local/memstack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Workspace-scoped, auditable memory banks for DeepSeek Harness.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LaoLon/dsh-memstack.git"
+  },
+  "homepage": "https://github.com/LaoLon/dsh-memstack#readme",
+  "bugs": {
+    "url": "https://github.com/LaoLon/dsh-memstack/issues"
+  },
+  "keywords": ["deepseek-harness", "dsh", "plugin", "memory", "agent"],
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": ["index.js", "lib", "cordis.patch.yml", "locale/*.json", "icon.svg"],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node --test",
+    "console": "node console/server.mjs"
+  }
+}
