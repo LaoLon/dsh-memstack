@@ -42,12 +42,12 @@ const EDGE_ALPHA = {
  * device pixel and disappears on a dark canvas.
  */
 const EDGE_WIDTH = {
-  contains: 1.15,
-  supersede: 1.9,
-  relation: 1.75,
-  topic: 1,
-  tag: 0.95,
-  'bank-link': 2.2,
+  contains: 2.3,
+  supersede: 3.7,
+  relation: 3.4,
+  topic: 2,
+  tag: 1.9,
+  'bank-link': 4.2,
 }
 
 function depthAlpha(depth) {
@@ -56,7 +56,7 @@ function depthAlpha(depth) {
 
 /**
  * Alpha and stroke width of one edge, in CSS pixels. Exported so `node --test`
- * can hold the legibility floor: an edge thinner than ~1px or dimmer than the
+ * can hold the legibility floor: an edge thinner than ~1.4px or dimmer than the
  * canvas reads as "no edges at all", which is exactly the 2026-11-03 report.
  */
 export function edgeStyle(edge, { scale = 1, depth = 0 } = {}) {
@@ -65,7 +65,7 @@ export function edgeStyle(edge, { scale = 1, depth = 0 } = {}) {
   const grow = Math.min(1.55, 0.75 + weight * 0.55)
   return {
     alpha: Math.min(1, (EDGE_ALPHA[type] ?? 0.3) * depthAlpha(depth)),
-    width: Math.max(0.9, Math.min(3.4, (EDGE_WIDTH[type] ?? 1.1) * grow * Math.max(0.7, scale))),
+    width: Math.max(1.4, Math.min(6.4, (EDGE_WIDTH[type] ?? 2.2) * grow * Math.max(0.7, scale))),
     dashed: type === 'topic' || type === 'tag',
   }
 }
@@ -454,7 +454,7 @@ export function createGraphView(canvas, options = {}) {
       const dx = b.x - a.x
       const dy = b.y - a.y
       const length = Math.hypot(dx, dy) || 1
-      const size = Math.max(3.4, Math.min(7, 4.2 * a.scale))
+      const size = Math.max(5, Math.min(10, 5.8 * a.scale))
       const ux = dx / length
       const uy = dy / length
       const tipX = b.x - ux * (nodeRadius(nodeById.get(edge.target) ?? {}) * a.scale + 2)
