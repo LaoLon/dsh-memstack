@@ -1,6 +1,7 @@
 /**
  * MemStack — Host half.
- * Workspace-scoped memory banks: index injection, change notices, and three tools.
+ * Workspace-scoped memory banks: decay-aware index injection, change notices,
+ * review/relation tools, and the local console supervisor.
  */
 
 import { basename } from 'node:path'
@@ -12,7 +13,15 @@ import { loadState, resolveHomeDir, saveState, statePath } from './lib/persist.j
 import { registerInjection } from './lib/inject.js'
 import { memoryTools } from './lib/tools.js'
 import { createConsoleSupervisor } from './lib/console.js'
-import { forgetEntry, inventory as inventoryOf, readEntry, searchEntries } from './lib/query.js'
+import {
+  entryView,
+  forgetEntry,
+  inventory as inventoryOf,
+  readEntry,
+  resolveEntry,
+  reviewQueue,
+  searchEntries,
+} from './lib/query.js'
 
 export const name = 'memstack'
 export const inject = ['tools']
@@ -23,6 +32,7 @@ const RULES = [
   '- 与当前代码、用户指令冲突时，以代码和指令为准。',
   '- 需要项目历史决策时先 memory_search；不要仅凭记忆断言代码现状。',
   '- 记忆中标为“已失效”“已否决”的方案不要再建议。',
+  '- 记忆会随时间衰减；检索结果里的留存率偏低时先向用户确认，确认后调用 memory_review。',
   '- 只在出现决策、约束、踩坑、偏好且无法从仓库重新获得时调用 memory_write，一次不超过 3 条。',
 ].join('\n')
 
@@ -179,6 +189,61 @@ export function apply(ctx, config) {
 
     forget(args) {
       return forgetEntry(store, args)
+    },
+
+    /** Applies the recall bump for the entries that were just injected. */
+    async reinforce(ids) {
+      const count = store.reinforce(ids)
+      if (count > 0) await commit()
+      return count
+    },
+
+    /** User confirmed a stale memory is still true (or that it is outdated). */
+    async review(args) {
+      const entry = resolveEntry(store, { ...args, includeInactive: false })
+      if (!entry) return null
+      if (args.verdict === 'outdated') {
+        store.archiveEntry(entry.id)
+        await commit()
+        return { result: 'archived', topic: entry.topic, claim: entry.claim }
+      }
+      store.reviewEntry(entry.id)
+      await commit()
+      const view = entryView(store, entry)
+      return {
+        result: 'reviewed',
+        topic: view.topic,
+        claim: view.claim,
+        retention: view.retention,
+        stage: view.stage,
+      }
+    },
+
+    async view(args) {
+      const entry = resolveEntry(store, { ...args, includeInactive: true })
+      return entry ? entryView(store, entry) : null
+    },
+
+    async relate({ from, to, type, note, remove } = {}) {
+      const source = resolveEntry(store, { ...from, includeInactive: true })
+      const target = resolveEntry(store, { ...to, includeInactive: true })
+      if (!source || !target) return null
+      if (remove) {
+        store.unrelate(source.id, target.id)
+      } else {
+        store.relate(source.id, target.id, type ?? 'related', note ?? '')
+      }
+      await commit()
+      return {
+        from: { id: source.id, topic: source.topic },
+        to: { id: target.id, topic: target.topic },
+        type: type ?? 'related',
+        removed: Boolean(remove),
+      }
+    },
+
+    reviewQueue(limit) {
+      return reviewQueue(store, { limit })
     },
   }
 

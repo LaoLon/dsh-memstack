@@ -60,7 +60,7 @@ async function bootstrap() {
     },
     registrations,
   )
-  apply(ctx, {})
+  apply(ctx, { consoleEnabled: false })
   const preStep = registrations.handlers.get('agent/pre-step')
   assert.ok(preStep, 'agent/pre-step handler must be registered')
 
@@ -90,7 +90,7 @@ test('插件装载：注册三个工具、一条静态规则与 pre-step 监听'
   try {
     assert.deepEqual(
       registrations.tools.map((tool) => tool.name),
-      ['memory_write', 'memory_search', 'memory_read', 'memory_forget', 'memory_inventory'],
+      ['memory_write', 'memory_search', 'memory_read', 'memory_forget', 'memory_review', 'memory_relate', 'memory_inventory'],
     )
     assert.ok(registrations.handlers.has('agent/pre-step'))
   } finally {

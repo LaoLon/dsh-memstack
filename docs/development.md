@@ -1,8 +1,8 @@
 # MemStack 开发文档（分片实施）
 
-> 版本：1.0
-> 日期：2026-10-21
-> 对应设计：[design.md](./design.md) v1.0
+> 版本：2.0
+> 日期：2026-10-21（v1） / 2026-11-03（v2）
+> 对应设计：[design.md](./design.md) v2.0；v2 取舍：[roadmap-v2.md](./roadmap-v2.md)
 > 原则：**每一片都能独立验证**，任何一片不成立就停下来，不往下叠。
 
 ---
@@ -304,3 +304,50 @@ escapeMemoryText(text)
 | 注入决策结构不熟 | SP-2 失败 | 退化为 `agent.inject()`，接受一轮延迟 |
 | 工作区归属拿不到 | SP-3 失败 | 用 cwd 作为 bank 键（目录即身份），后续再迁移 |
 | 与 AGENTS.md 内容重复 | 两者都写了同一规则 | 文档与注入文案明确职责边界；UI 提示 |
+
+---
+
+## 12. v2 实施记录
+
+v2 不再按“先 spike 再写”推进，而是每个模块先落纯函数与测试，再接 UI/HTTP：
+
+| Shard | 内容 | 验收 |
+|---|---|---|
+| V1 | `lib/decay.js` + store 迁移 | 固定时钟下留存率、复习/召回、锚点、不变量 |
+| V2 | schema v2 字段与 `assertInvariants` | v1 state 幂等迁移；随机操作序列后不变量成立 |
+| V3 | 注入排序与 `reinforce` | dormant 不注入但可检索；每轮只加固一次 |
+| V4 | `lib/graph.js` | 节点/边去重、派生边上限、inactive 过滤、summary |
+| V5 | `lib/portable.js` + CLI | merge 幂等、id 重映射、topic 冲突归档、legacy 解析、Markdown |
+| V6 | 控制台 API | 真实 HTTP 集成测试覆盖 UTF-8 写读、复习、关系、导出/导入、备份 |
+| V7 | 3D 图谱与四个页面 | 截图检查深/浅色、抽屉 inset、筛选、空状态 |
+
+### 12.1 测试
+
+```powershell
+$node = 'C:\Users\<you>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
+& $node --test        # 83 项，当前全绿
+```
+
+- 纯逻辑测试全部显式传 `now`，不要依赖 `new Date()`；
+- `test/server.spec.js` 会起真实 `server.mjs`（临时 `MEMSTACK_HOME` + 随机端口），务必在 `t.after` 里 `child.kill()` 并清理临时目录，否则 `node --test` 会挂住；
+- 插件测试使用 `{ consoleEnabled: false }`，避免测试进程拉起真实控制台。
+
+### 12.2 踩过的坑
+
+| 现象 | 原因 | 修复 |
+|---|---|---|
+| `node --test` 超过 120s 不退出 | 插件默认启动控制台，子进程未 unref | 测试禁用 console + `child.unref()` |
+| 所有条目都显示“沉寂” | 测试夹具用真实 `new Date()`（2026-11） | 固定 `NOW` 传入 |
+| 中文/编码被破坏 | PowerShell `Set-Content` 重写 UTF-8 文件 | 只用 write/edit 工具改文本 |
+| 空面板/空状态盖住图谱 | `.drawer` / `.graph-empty` 的 display 覆盖了 `[hidden]` | 全局 `[hidden]{display:none!important}` |
+| 导入后条目翻倍 | PowerShell `Invoke-RestMethod` 把中文发成 `?`，导致内容比较失败 | 浏览器 UTF-8 fetch 正常；集成测试用 fetch |
+| 浅色截图文字仍是深色主题 | 主题在首帧后才由 JS 设置，CSS 颜色 transition 停在起点 | `<head>` 内联脚本在样式表前恢复主题 |
+| 深链打开抽屉时节点藏在抽屉后 | `openHashEntry` 在 `setData` 之前调用，`focus` 无位置 | boot 中 `await refreshGraph()`；先 `syncDrawerInset()` 再 focus |
+| 图谱右侧节点被裁 | 默认相机距离固定 900，36 节点放不下 | 按节点数 780/940/1080/1220 自适应 |
+
+### 12.3 零依赖边界
+
+- 控制台不引 three.js / d3 / 打包器：3D 投影、力导向、sprite、标签避让都在 `console/graph3d.js`；
+- bundle 不依赖 DSH 内部包：只用 Node 标准库与 `index.js` 的 Host 契约；
+- 不把 `node_modules` 或构建产物提交进仓库；`npm test` 在裸 Node 下可跑。
+

@@ -1,8 +1,8 @@
 # MemStack 设计文档
 
-> 版本：1.0
-> 日期：2026-10-21
-> 状态：已定稿，待实施
+> 版本：2.0（v1 契约 + v2 增量，见 §22）
+> 日期：2026-10-21（v1） / 2026-11-03（v2）
+> 状态：v1、v2 均已实施
 > 目标平台：DeepSeek Harness（Desktop / Web UI，profile `desktop`）
 
 ---
@@ -694,3 +694,70 @@ domain 名 `memstack`，version 1：
 | 4 | 库的粒度 | 每工作区一个库，惰性创建；对话只是来源 | 对话数量≠记忆数量；避免碎片化与删对话丢记忆 | 中（数据模型） |
 | 5 | 注入方式 | sourced 用户消息 + 追加式通知 | 可回放、KV cache 友好；复刻 `dsh-agent-instructions` 成熟范式 | 中（注入实现） |
 | 6 | 取代语义 | topic 唯一 active + supersede 链 + rejected[] | 删除旧条目无用（模型会重新推导）；驳回记录才有效 | 低（字段） |
+
+---
+
+## 22. v2 增量设计（已实施）
+
+v1 解决了“结论会过时、旧结论必须可追溯”，但记忆仍是静态的、不可见的、不可迁移的。v2 增加四个维度，完整取舍与风险见 [roadmap-v2.md](./roadmap-v2.md)。
+
+### 22.1 Schema v2
+
+新增字段全部向后兼容，`Store.fromJSON()` 会幂等补齐：
+
+| 字段 | 含义 |
+|---|---|
+| `stabilityDays` | 半衰期天数，初始值由 `kind × confidence × pin` 决定，范围 0.5–730 |
+| `lastReviewedAt` | 上次确认“仍然成立”的时间，也是衰减锚点 |
+| `reviewCount` / `recalledCount` | 复习次数 / 被注入次数 |
+| `lastRecalledAt` | 上次被注入的时间 |
+| `tags[]` | 规范化小写标签，最多 8 个 |
+| `relations[]` | `{ target, type, note }`，类型 `related / refines / depends / contradicts` |
+| `archivedFrom` | 归档前的状态，用于恢复与拒绝恢复已取代条目 |
+
+不变量：I1 同一 bank+topic 仅一条 active；I7 关系目标必须存在，删除条目时 `pruneRelations`；I8 稳定度在 `[0.5, 730]`。`assertInvariants()` 在测试与随机操作序列中校验。
+
+### 22.2 衰减与复习
+
+- `R = 0.5 ^ (ageDays / stabilityDays)`，纯函数，显式传入 `now`；
+- 锚点优先级：`supersededAt` → `archivedAt` → `lastReviewedAt` → `createdAt`，历史链从结束时刻继续衰减，而不是从创建时刻；
+- 复习 ×1.8、召回 ×`1 + 0.25(1-R)`、固定下限 ×4；
+- 阶段 `fresh / stable / fading / dormant` 只影响注入排序与省略，不改变真假，也不删除；
+- 注入时只对本次真正进入索引的 active 条目调用一次 `reinforce`，避免每轮重复加固。
+
+### 22.3 图谱投影
+
+`buildGraph(state, options)` 是纯投影，布局与渲染归 `console/graph3d.js`：
+
+- 结构边：`contains`、`supersede`（有向）、`relation`（`related` 无向，其余有向）、`bank-link`；
+- 派生边：`topic`（首段同族）、`tag`（共享标签）；每个节点最多 `maxDerivedPerNode` 个近邻，按最近更新连链，不建团；
+- 无向边用规范化 key 去重；`includeInactive=false` 时同时过滤节点与悬空边；
+- `summary` 提供节点/边/库/条目/状态/阶段/平均留存，供页头与数据页复用。
+
+### 22.4 可迁移 bundle
+
+- `format: memstack.bundle`，`version: 2`，`state` 内嵌完整历史（不是投影）；
+- 解析接受旧版裸 `state.json`（`legacy: true`），统一走 `Store.fromJSON()` 迁移；
+- 冲突策略见 README：`duplicate-id` 跳过、id 冲突重映射、`topic-taken` 导入项归档、`replace` 显式确认；
+- 导入前在同目录写 `state.json.<stamp>.bak`，导入报告包含计数、冲突、备份路径；
+- Markdown 投影用于 git / 人读，不用于回导，避免有损往返。
+
+### 22.5 控制台 UI
+
+- 手写 Canvas2D 3D：轨道相机、透视投影、sprite 缓存、力导向布局、标签碰撞剔除；无 three.js/CDN；
+- 图谱筛选（库/类型/状态/边）、搜索高亮、选中聚焦、抽屉打开时投影中心左移、自动旋转在选中时暂停；
+- 抽屉：留存曲线、详情、驳回理由、关系、替代链、元信息与操作；
+- 数据页：导出/导入、留存与类型分布、待复习队列；浅色主题与中英文切换；
+- 控制台只绑定 `127.0.0.1`，静态资源白名单，写操作串行化，原子写（temp + rename）。
+
+### 22.6 v2 决策补充
+
+| # | 决策 | 选择 | 理由 | 代价 |
+|---|---|---|---|---|
+| 7 | 遗忘的语义 | 只降低注入概率，永不自动删除 | 结论真假与“是否常被想起”是两件事；删除不可逆 | 低 |
+| 8 | 复习触发 | 显式 `memory_review`，要求用户确认 | 自动“复习”会把噪音固化成真理 | 低 |
+| 9 | 图谱渲染 | 手写 Canvas2D，不引入 three.js | 离线可用、零依赖、无构建；代价是自维护投影与交互 | 中 |
+| 10 | 派生边 | 近邻链 + 每节点上限，而非全连接 | 标签/主题全连接会迅速变成毛球 | 低 |
+| 11 | 导入默认 | `merge`，冲突时保留本地 active | 迁移不能静默覆盖用户当前结论 | 中 |
+| 12 | 迁移格式 | 带版本 JSON bundle，内嵌完整 state | 可校验、可报告、可回滚；Markdown 只做投影 | 低 |
+| 13 | 主题 | 深色优先，浅色显式切换 | 图谱在深色背景下对比度最好；浅色用于分享/打印 | 低 |

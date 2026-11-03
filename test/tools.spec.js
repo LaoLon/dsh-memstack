@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { makeWorkspaceStore } from '../test-support/helpers.js'
 import { memoryTools } from '../lib/tools.js'
-import { readEntry, searchEntries, inventory as inventoryOf, forgetEntry } from '../lib/query.js'
+import { readEntry, resolveEntry, searchEntries, inventory as inventoryOf, forgetEntry } from '../lib/query.js'
 
 function fakeRuntime(store, bankId) {
   return {
@@ -19,6 +19,29 @@ function fakeRuntime(store, bankId) {
     read: (args) => readEntry(store, args),
     inventory: () => inventoryOf(store, {}),
     forget: (args) => forgetEntry(store, args),
+    async review(args) {
+      const entry = resolveEntry(store, { ...args, includeInactive: false })
+      if (!entry) return null
+      if (args.verdict === 'outdated') {
+        store.archiveEntry(entry.id)
+        return { result: 'archived', topic: entry.topic, claim: entry.claim }
+      }
+      store.reviewEntry(entry.id)
+      return { result: 'reviewed', topic: entry.topic, claim: entry.claim, retention: 1, stage: 'fresh' }
+    },
+    async relate({ from, to, type, note, remove }) {
+      const source = resolveEntry(store, { ...from, includeInactive: true })
+      const target = resolveEntry(store, { ...to, includeInactive: true })
+      if (!source || !target) return null
+      if (remove) store.unrelate(source.id, target.id)
+      else store.relate(source.id, target.id, type ?? 'related', note ?? '')
+      return {
+        from: { id: source.id, topic: source.topic },
+        to: { id: target.id, topic: target.topic },
+        type: type ?? 'related',
+        removed: Boolean(remove),
+      }
+    },
   }
 }
 
@@ -28,13 +51,13 @@ function toolByName(tools, name) {
   return tool
 }
 
-test('三个工具的定义是可序列化的普通对象', () => {
+test('工具的定义是可序列化的普通对象', () => {
   const { store, bankId } = makeWorkspaceStore()
   const tools = memoryTools(fakeRuntime(store, bankId))
 
   assert.deepEqual(
     tools.map((tool) => tool.name),
-    ['memory_write', 'memory_search', 'memory_read', 'memory_forget', 'memory_inventory'],
+    ['memory_write', 'memory_search', 'memory_read', 'memory_forget', 'memory_review', 'memory_relate', 'memory_inventory'],
   )
   for (const tool of tools) {
     assert.equal(typeof tool.description, 'string')
@@ -150,4 +173,84 @@ test('memory_inventory 给出所有状态并按库分组', async () => {
   const text = inventory.output.render({}, rows)[0].text
   assert.match(text, /【MemStack】|【/)
   assert.match(text, /a\.one/)
+})
+
+test('memory_review 确认后重置留存，过时则停用', async () => {
+  const { store, bankId } = makeWorkspaceStore()
+  const tools = memoryTools(fakeRuntime(store, bankId))
+  const write = toolByName(tools, 'memory_write')
+  const review = toolByName(tools, 'memory_review')
+
+  await write.execute({ topic: 'review.me', kind: 'decision', claim: '仍然成立' }, {})
+  const entry = store.findActive(bankId, 'review.me')
+  entry.stabilityDays = 30
+  entry.lastReviewedAt = '2025-01-01T00:00:00.000Z'
+  entry.reviewCount = 0
+
+  const reviewed = await review.execute({ topic: 'review.me', verdict: 'still-true' }, {})
+  assert.equal(reviewed.result, 'reviewed')
+  assert.equal(reviewed.claim, '仍然成立')
+  assert.equal(reviewed.retention, 1)
+  assert.equal(entry.reviewCount, 1)
+  assert.equal(entry.stabilityDays, 54)
+  assert.match(review.output.render({}, reviewed)[0].text, /已复习 review\.me/)
+
+  const archived = await review.execute({ id: entry.id, verdict: 'outdated' }, {})
+  assert.equal(archived.result, 'archived')
+  assert.equal(entry.status, 'archived')
+  assert.match(review.output.render({}, archived)[0].text, /已停用/)
+  await assert.rejects(() => review.execute({ topic: 'review.me', verdict: 'still-true' }, {}), /not found/)
+})
+
+test('memory_relate 建立与移除关系，并拒绝不存在的目标', async () => {
+  const { store, bankId } = makeWorkspaceStore()
+  const tools = memoryTools(fakeRuntime(store, bankId))
+  const write = toolByName(tools, 'memory_write')
+  const relate = toolByName(tools, 'memory_relate')
+
+  await write.execute({ topic: 'rel.source', claim: '源结论' }, {})
+  await write.execute({ topic: 'rel.target', claim: '目标结论' }, {})
+
+  const created = await relate.execute(
+    { source: 'rel.source', target: 'rel.target', type: 'refines', note: '更细' },
+    {},
+  )
+  assert.deepEqual(created, { from: 'rel.source', to: 'rel.target', type: 'refines', removed: false })
+  const source = store.findActive(bankId, 'rel.source')
+  assert.equal(source.relations[0].target, store.findActive(bankId, 'rel.target').id)
+  assert.equal(source.relations[0].note, '更细')
+  assert.match(relate.output.render({}, created)[0].text, /已建立关系：rel\.source —refines→ rel\.target/)
+
+  const removed = await relate.execute({ source: 'rel.source', target: 'rel.target', remove: true }, {})
+  assert.equal(removed.removed, true)
+  assert.equal(source.relations.length, 0)
+  assert.match(relate.output.render({}, removed)[0].text, /已移除关系/)
+
+  await assert.rejects(() => relate.execute({ source: 'rel.source', target: 'rel.missing' }, {}), /not found/)
+})
+
+test('memory_read 展示关系与取代链，memory_search 标注留存阶段', async () => {
+  const { store, bankId } = makeWorkspaceStore()
+  const tools = memoryTools(fakeRuntime(store, bankId))
+  const write = toolByName(tools, 'memory_write')
+  const read = toolByName(tools, 'memory_read')
+  const search = toolByName(tools, 'memory_search')
+  const relate = toolByName(tools, 'memory_relate')
+
+  await write.execute({ topic: 'chain.x', claim: '第一版' }, {})
+  await write.execute({ topic: 'chain.x', claim: '第二版' }, {})
+  await write.execute({ topic: 'chain.y', claim: '相关结论', tags: ['chain'] }, {})
+  await relate.execute({ source: 'chain.x', target: 'chain.y', type: 'related' }, {})
+
+  const view = await read.execute({ topic: 'chain.x' }, {})
+  assert.equal(view.claim, '第二版')
+  assert.equal(view.status, 'active')
+  assert.equal(view.chain.length, 2)
+  assert.equal(view.relations[0].target.topic, 'chain.y')
+  assert.equal(typeof view.retention, 'number')
+
+  const rows = await search.execute({ query: 'chain' }, {})
+  assert.ok(rows.length >= 2)
+  assert.ok(rows.every((row) => typeof row.retention === 'number' && row.stage))
+  assert.match(search.output.render({ query: 'chain' }, rows)[0].text, /留存/)
 })

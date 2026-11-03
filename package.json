@@ -1,9 +1,9 @@
 {
   "name": "@local/memstack",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Workspace-scoped, auditable memory banks for DeepSeek Harness.",
+  "description": "Memory banks for DeepSeek Harness: supersede chains, a forgetting curve, a 3D relation graph and portable export/import.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -19,7 +19,7 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "lib", "cordis.patch.yml", "locale/*.json", "icon.svg"],
+  "files": ["index.js", "lib", "console", "cordis.patch.yml", "locale/*.json", "icon.svg"],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -27,6 +27,9 @@
   },
   "scripts": {
     "test": "node --test",
-    "console": "node console/server.mjs"
+    "console": "node console/server.mjs",
+    "demo": "node console/demo.mjs",
+    "export": "node console/cli.mjs export",
+    "import": "node console/cli.mjs import"
   }
 }

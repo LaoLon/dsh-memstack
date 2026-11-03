@@ -1,413 +1,278 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>MemStack</title>
-<style>
-  :root {
-    --bg: #f6f7f9; --panel: #fff; --text: #1c1f23; --muted: #6b7280;
-    --line: #e5e7eb; --accent: #1f6feb; --ok: #15803d; --warn: #b45309; --bad: #b91c1c;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #16181c; --panel: #1e2126; --text: #e7e9ee; --muted: #9aa2ad;
-      --line: #2c3138; --accent: #58a6ff; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171;
-    }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); }
-  header { padding: 18px 24px 10px; }
-  h1 { margin: 0 0 4px; font-size: 18px; }
-  .path { color: var(--muted); font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
-  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 12px 24px; }
-  .toolbar input, .toolbar select, .toolbar button {
-    font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px;
-    background: var(--panel); color: var(--text);
-  }
-  .toolbar input[type="search"] { min-width: 240px; }
-  .toolbar button { cursor: pointer; }
-  .toolbar button:hover { border-color: var(--accent); color: var(--accent); }
-  .count { color: var(--muted); margin-left: auto; }
-  #lang {
-    margin-left: 8px; min-width: 62px; font-weight: 600;
-    background: var(--accent); border-color: var(--accent); color: #fff;
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.18);
-  }
-  #lang:hover {
-    background: color-mix(in srgb, var(--accent), #000 14%);
-    border-color: color-mix(in srgb, var(--accent), #000 14%);
-    color: #fff;
-  }
-  @media (prefers-color-scheme: dark) {
-    #lang, #lang:hover { color: #0b1220; }
-  }
-  main { padding: 0 24px 40px; }
-  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { font-size: 12px; color: var(--muted); font-weight: 600; background: color-mix(in srgb, var(--panel), var(--bg) 55%); }
-  tr:last-child td { border-bottom: none; }
-  tbody tr.row { cursor: pointer; }
-  tbody tr.row:hover { background: color-mix(in srgb, var(--panel), var(--bg) 40%); }
-  .topic { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
-  .claim { max-width: 520px; }
-  .badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
-  .kind-decision { color: var(--accent); }
-  .kind-constraint { color: var(--warn); }
-  .kind-gotcha { color: var(--bad); }
-  .status-active { color: var(--ok); }
-  .status-superseded, .status-archived { color: var(--muted); }
-  .ops { white-space: nowrap; }
-  .ops button, .bank-row button {
-    font: inherit; font-size: 12px; padding: 3px 8px; margin-right: 6px; cursor: pointer;
-    border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--text);
-  }
-  .ops button:hover, .bank-row button:hover { border-color: var(--accent); color: var(--accent); }
-  .ops button.danger:hover, .bank-row button.danger:hover { border-color: var(--bad); color: var(--bad); }
-  .detail td { background: color-mix(in srgb, var(--panel), var(--bg) 65%); }
-  .detail pre { white-space: pre-wrap; margin: 6px 0; font-size: 13px; }
-  .rejected { margin: 6px 0 0; padding-left: 18px; color: var(--bad); }
-  .empty { padding: 40px; text-align: center; color: var(--muted); }
-  .err { color: var(--bad); padding: 8px 24px; }
-  .panel { margin: 0 24px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
-  .panel-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-  .panel-head h2 { margin: 0; font-size: 14px; }
-  .panel-head select { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); }
-  .bank-row, .link-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
-  .bank-row:first-child, .link-row:first-child { border-top: none; }
-  .bank-row input[type="text"] { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--text); }
-  .bank-row input.b-title { width: 180px; font-weight: 600; }
-  .bank-row input.b-desc { flex: 1; min-width: 180px; }
-  .link-row .grow { flex: 1; }
-  .newbank { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-  .newbank input { font: inherit; padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); }
-  .newbank input#newBankTitle { width: 180px; }
-  .newbank input#newBankDesc { flex: 1; min-width: 200px; }
-</style>
+<title>MemStack · 记忆图谱</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml" />
+<script>
+  // Restore the theme before the stylesheet paints, so light mode never flashes dark.
+  try {
+    const asked = new URLSearchParams(location.search).get('theme')
+    const saved = localStorage.getItem('memstack.theme')
+    const theme = asked === 'light' || asked === 'dark' ? asked : saved
+    if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme
+  } catch {}
+</script>
+<link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-<header>
-  <h1 data-i18n="title">MemStack · 记忆库</h1>
-  <div class="path" id="path">loading…</div>
-</header>
-<div class="toolbar">
-  <select id="bank"></select>
-  <select id="status">
-    <option value="active" data-i18n="statusActive">生效</option>
-    <option value="all" data-i18n="statusAll">全部状态</option>
-    <option value="superseded" data-i18n="statusSuperseded">已取代</option>
-    <option value="archived" data-i18n="statusDisabled">已停用</option>
-  </select>
-  <input id="query" type="search" data-i18n-placeholder="searchPlaceholder" placeholder="搜索 topic / 结论 / 详情 / 否决方案" />
-  <button id="refresh" data-i18n="refresh">刷新</button>
-  <button id="lang" title="Language">EN</button>
-  <span class="count" id="count"></span>
+<div class="aurora" aria-hidden="true"><span></span><span></span><span></span></div>
+
+<div class="layout">
+  <aside class="rail">
+    <div class="brand">
+      <img src="/icon.svg" alt="" width="34" height="34" />
+      <div class="brand-text"><strong>MemStack</strong><span data-i18n="brandSub">记忆图谱</span></div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <button class="nav-item is-active" data-view="graph" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="7" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="12" cy="18" r="2.4"/><path d="M8.2 7.6 10 16m2-8.4L16.2 6.6M7.7 9.2l8.6 6.2"/></svg>
+        <span data-i18n="navGraph">图谱</span>
+        <em class="nav-badge" id="navGraphCount">0</em>
+      </button>
+      <button class="nav-item" data-view="memories" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2"/></svg>
+        <span data-i18n="navMemories">记忆</span>
+        <em class="nav-badge" id="navMemCount">0</em>
+      </button>
+      <button class="nav-item" data-view="banks" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8.5 12 4l9 4.5-9 4.5-9-4.5Z"/><path d="m3 13 9 4.5L21 13M3 17.5 12 22l9-4.5"/></svg>
+        <span data-i18n="navBanks">记忆库</span>
+        <em class="nav-badge" id="navBankCount">0</em>
+      </button>
+      <button class="nav-item" data-view="data" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        <span data-i18n="navData">数据</span>
+      </button>
+    </nav>
+
+    <div class="rail-stats" id="railStats"></div>
+
+    <div class="rail-foot">
+      <button class="icon-btn" id="themeBtn" type="button" title="theme" aria-label="theme">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/><circle cx="12" cy="12" r="4"/></svg>
+      </button>
+      <button class="icon-btn lang" id="langBtn" type="button" title="language">EN</button>
+      <span class="conn" id="conn" title="console"><i></i><span data-i18n="connected">本地</span></span>
+    </div>
+  </aside>
+
+  <div class="workspace">
+    <header class="topbar">
+      <div class="heading">
+        <h1 id="viewTitle">记忆图谱</h1>
+        <p id="viewSubtitle"></p>
+      </div>
+      <div class="top-actions">
+        <label class="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+          <input id="globalSearch" type="search" autocomplete="off" data-i18n-placeholder="searchPh" placeholder="搜索主题 / 结论 / 标签 / 否决方案" />
+          <kbd>/</kbd>
+        </label>
+        <button class="ghost-btn" id="refreshBtn" type="button" data-i18n="refresh">刷新</button>
+        <button class="primary-btn" id="newEntryBtn" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span data-i18n="newEntry">新建记忆</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="views">
+      <section class="view is-active" data-view="graph">
+        <div class="graph-shell" id="graphShell">
+          <canvas id="graphCanvas"></canvas>
+          <div class="graph-panel graph-filters" id="graphFilters">
+            <div class="panel-label" data-i18n="graphFilters">筛选</div>
+            <div class="chips" id="graphBankChips"></div>
+            <div class="chips" id="graphKindChips"></div>
+            <div class="chips" id="graphEdgeChips"></div>
+          </div>
+          <div class="graph-tools">
+            <button class="pill" type="button" data-graph="rotate" aria-pressed="true">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/></svg>
+              <span data-i18n="autoRotate">自动旋转</span>
+            </button>
+            <button class="pill" type="button" data-graph="mode">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="M12 12 4 7.5M12 12l8-4.5M12 12v9"/></svg>
+              <span data-i18n="toggle3d">2D</span>
+            </button>
+            <button class="pill" type="button" data-graph="reset">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v8m-3-4h6"/></svg>
+              <span data-i18n="resetView">重置视角</span>
+            </button>
+          </div>
+          <div class="graph-legend" id="graphLegend"></div>
+          <div class="graph-empty" id="graphEmpty" hidden>
+            <strong data-i18n="graphEmptyTitle">还没有可显示的节点</strong>
+            <span data-i18n="graphEmptyHint">写入一条记忆后，这里会长出第一颗节点。</span>
+          </div>
+          <div class="graph-hint" data-i18n="graphHint">拖拽旋转 · 滚轮缩放 · 点击查看详情</div>
+          <div class="graph-tooltip" id="graphTooltip" hidden></div>
+        </div>
+      </section>
+
+      <section class="view" data-view="memories">
+        <div class="panel">
+          <div class="toolbar">
+            <div class="selects">
+              <select id="memBank"></select>
+              <select id="memStatus"></select>
+              <select id="memKind"></select>
+              <select id="memSort"></select>
+            </div>
+            <div class="toolbar-meta"><span id="memCount"></span></div>
+          </div>
+          <div class="mem-list" id="memList"></div>
+          <div class="list-foot"><button class="ghost-btn" id="memMore" type="button" hidden data-i18n="loadMore">显示更多</button></div>
+        </div>
+      </section>
+
+      <section class="view" data-view="banks">
+        <div class="bank-grid" id="bankCards"></div>
+        <div class="panel create-bank">
+          <div class="panel-head">
+            <h2 data-i18n="newBankTitle">新建主题库</h2>
+            <span class="muted" data-i18n="newBankHint">跨项目领域知识，可关联到任意工作区</span>
+          </div>
+          <div class="inline-form">
+            <input id="newBankTitle" type="text" data-i18n-placeholder="bankNamePh" placeholder="库名称" />
+            <input id="newBankDesc" type="text" data-i18n-placeholder="bankDescPh" placeholder="一句话描述（出现在可检索提示里）" />
+            <button class="primary-btn" id="createBankBtn" type="button" data-i18n="createBank">创建</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2 data-i18n="linksTitle">库关联</h2>
+            <span class="muted" data-i18n="linksHint">注入 = 把对方条目放进上下文；检索 = 允许 agent 主动查询</span>
+          </div>
+          <div class="link-editor">
+            <label class="field-inline"><span data-i18n="sourceBank">源库</span><select id="linkSource"></select></label>
+            <div class="link-list" id="linkList"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" data-view="data">
+        <div class="data-grid">
+          <div class="panel">
+            <div class="panel-head"><h2 data-i18n="exportTitle">导出</h2><span class="muted" data-i18n="exportHint">可迁移到另一台机器</span></div>
+            <p class="muted" data-i18n="exportBody">JSON bundle 包含全部历史（含已取代条目）；Markdown 适合进 git 或直接阅读。</p>
+            <div class="button-row">
+              <button class="primary-btn" id="exportJson" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4"/><path d="M5 19h14"/></svg>
+                <span data-i18n="exportJson">导出 JSON bundle</span>
+              </button>
+              <button class="ghost-btn" id="exportMd" type="button" data-i18n="exportMd">导出 Markdown</button>
+            </div>
+            <div class="kv"><span data-i18n="dataFile">数据文件</span><code id="dataPath">—</code></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><h2 data-i18n="importTitle">导入</h2><span class="muted" data-i18n="importHint">合并或整库替换，导入前自动备份</span></div>
+            <div class="dropzone" id="dropzone" tabindex="0">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0 4 4m-4-4L8 8"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>
+              <strong data-i18n="dropTitle">拖入 bundle，或点击选择</strong>
+              <span class="muted" data-i18n="dropHint">支持 memstack.bundle.json 与旧版 state.json</span>
+              <input type="file" id="importFile" accept="application/json,.json" hidden />
+            </div>
+            <div class="inline-form">
+              <select id="importMode">
+                <option value="merge" data-i18n="importMerge">合并（保留双方）</option>
+                <option value="replace" data-i18n="importReplace">替换（清空本地）</option>
+              </select>
+              <button class="ghost-btn" id="importRun" type="button" disabled data-i18n="importRun">开始导入</button>
+            </div>
+            <pre class="report" id="importReport" hidden></pre>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><h2 data-i18n="statsTitle">分布</h2></div>
+            <div id="statsBody" class="stats-body"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><h2 data-i18n="reviewTitle">待复习</h2><span class="muted" data-i18n="reviewHint">留存率最低的记忆，确认后会更牢固</span></div>
+            <div id="reviewList" class="review-list"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
 </div>
-<div class="err" id="err" hidden></div>
-<section class="panel">
-  <div class="panel-head">
-    <h2 data-i18n="banksTitle">记忆库</h2>
-    <span class="path" id="bankCount"></span>
-  </div>
-  <div id="bankList"></div>
-  <div class="newbank">
-    <input id="newBankTitle" data-i18n-placeholder="newBankTitlePh" placeholder="新建主题库名称" />
-    <input id="newBankDesc" data-i18n-placeholder="newBankDescPh" placeholder="一句话描述（会出现在“可检索库”提示里）" />
-    <button id="createBank" data-i18n="createBank">新建主题库</button>
-  </div>
-</section>
-<section class="panel">
-  <div class="panel-head">
-    <h2 data-i18n="linksTitle">关联</h2>
-    <select id="linkSource"></select>
-  </div>
-  <div id="linkList"></div>
-</section>
-<main>
-  <table>
-    <thead>
-      <tr>
-        <th style="width:220px" data-i18n="thTopic">主题</th>
-        <th data-i18n="thClaim">结论</th>
-        <th style="width:80px" data-i18n="thType">类型</th>
-        <th style="width:96px" data-i18n="thStatus">状态</th>
-        <th style="width:150px" data-i18n="thUpdated">更新时间</th>
-        <th style="width:190px" data-i18n="thOps">操作</th>
-      </tr>
-    </thead>
-    <tbody id="rows"></tbody>
-  </table>
-</main>
-<script>
-const I18N = {
-  zh: {
-    title: 'MemStack · 记忆库', loading: '加载中…', allBanks: '全部记忆库',
-    statusActive: '生效', statusAll: '全部状态', statusSuperseded: '已取代', statusDisabled: '已停用',
-    searchPlaceholder: '搜索 topic / 结论 / 详情 / 否决方案', refresh: '刷新',
-    banksTitle: '记忆库', newBankTitlePh: '新建主题库名称', newBankDescPh: '一句话描述（会出现在“可检索库”提示里）', createBank: '新建主题库',
-    linksTitle: '关联', injected: '注入', searchable: '可检索', onlyOneBank: '只有一个库时没有可关联的对象',
-    thTopic: '主题', thClaim: '结论', thType: '类型', thStatus: '状态', thUpdated: '更新时间', thOps: '操作',
-    kind: { decision: '决策', constraint: '约束', gotcha: '坑', preference: '偏好', 'open-question': '未决' },
-    status: { active: '生效', superseded: '已取代', archived: '已停用', candidate: '候选' },
-    disabledSuffix: '（已停用）', disabledBadge: ' · 已停用',
-    pin: '固定', unpin: '取消固定', disable: '停用', enable: '启用', deleteEntry: '删除', deleteBank: '删除库',
-    noDetail: '（无详情）', rejected: '已否决：', supersedes: '取代了', supersededBy: '被', supersededByTail: '取代',
-    empty: '没有匹配的记忆', bankCount: (n) => `${n} 个库`, count: (n, m) => `${n} 条 · ${m} 个库`,
-    ratio: (a, t) => `${a} 生效 / ${t} 总`,
-    deleteEntryConfirm: '永久删除这条记忆？此操作不可恢复。', deleteBankConfirm: '删除这个记忆库及其全部条目？此操作不可恢复。',
-    opFailed: '操作失败：', loadFailed: '加载失败：'
-  },
-  en: {
-    title: 'MemStack · Memory', loading: 'loading…', allBanks: 'All banks',
-    statusActive: 'Active', statusAll: 'All statuses', statusSuperseded: 'Superseded', statusDisabled: 'Disabled',
-    searchPlaceholder: 'Search topic / claim / detail / rejected options', refresh: 'Refresh',
-    banksTitle: 'Banks', newBankTitlePh: 'New topic bank name', newBankDescPh: 'One-line description (shown in the searchable-bank hint)', createBank: 'Create bank',
-    linksTitle: 'Links', injected: 'inject', searchable: 'searchable', onlyOneBank: 'Nothing to link while only one bank exists',
-    thTopic: 'Topic', thClaim: 'Claim', thType: 'Type', thStatus: 'Status', thUpdated: 'Updated', thOps: 'Actions',
-    kind: { decision: 'decision', constraint: 'constraint', gotcha: 'gotcha', preference: 'preference', 'open-question': 'open' },
-    status: { active: 'active', superseded: 'superseded', archived: 'disabled', candidate: 'candidate' },
-    disabledSuffix: ' (disabled)', disabledBadge: ' · disabled',
-    pin: 'Pin', unpin: 'Unpin', disable: 'Disable', enable: 'Enable', deleteEntry: 'Delete', deleteBank: 'Delete bank',
-    noDetail: '(no detail)', rejected: 'Rejected: ', supersedes: 'supersedes', supersededBy: 'superseded by', supersededByTail: '',
-    empty: 'No matching memory', bankCount: (n) => `${n} bank${n === 1 ? '' : 's'}`, count: (n, m) => `${n} entr${n === 1 ? 'y' : 'ies'} · ${m} bank${m === 1 ? '' : 's'}`,
-    ratio: (a, t) => `${a} active / ${t} total`,
-    deleteEntryConfirm: 'Permanently delete this memory? This cannot be undone.', deleteBankConfirm: 'Delete this bank and all its entries? This cannot be undone.',
-    opFailed: 'Action failed: ', loadFailed: 'Load failed: '
-  }
-};
 
-const saved = localStorage.getItem('memstack.lang');
-let lang = saved === 'zh' || saved === 'en' ? saved : ((navigator.language || 'en').toLowerCase().startsWith('zh') ? 'zh' : 'en');
-const T = () => I18N[lang];
+<aside class="drawer" id="drawer" hidden aria-live="polite">
+  <header class="drawer-head">
+    <div class="drawer-title"><span class="badge" id="drawerKind"></span><code id="drawerTopic"></code></div>
+    <button class="icon-btn" id="drawerClose" type="button" aria-label="close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+    </button>
+  </header>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
 
-let state = { banks: [], entries: [], links: [] };
-const expanded = new Set();
+<div class="toast-wrap" id="toastWrap"></div>
 
-const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const bankTitle = (id) => (state.banks.find((bank) => bank.id === id) || {}).title || id;
-const entryTopic = (id) => (state.entries.find((entry) => entry.id === id) || {}).topic || '';
+<dialog id="entryDialog" class="dialog">
+  <form method="dialog" id="entryForm" novalidate>
+    <header class="dialog-head">
+      <h2 id="entryDialogTitle">新建记忆</h2>
+      <button class="icon-btn" type="button" data-close="entryDialog" aria-label="close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+    <div class="form-grid">
+      <label class="field"><span data-i18n="fieldBank">记忆库</span><select id="fieldBank" required></select></label>
+      <label class="field"><span data-i18n="fieldKind">类型</span><select id="fieldKind"></select></label>
+      <label class="field span2"><span data-i18n="fieldTopic">主题键</span><input id="fieldTopic" type="text" placeholder="spdk.ingest-path" required /></label>
+      <label class="field span2"><span data-i18n="fieldClaim">结论（一句话）</span><textarea id="fieldClaim" rows="2" required></textarea></label>
+      <label class="field span2"><span data-i18n="fieldDetail">详情 / 依据</span><textarea id="fieldDetail" rows="4"></textarea></label>
+      <label class="field span2"><span data-i18n="fieldTags">标签（逗号分隔）</span><input id="fieldTags" type="text" placeholder="spdk, storage" /></label>
+      <div class="field span2">
+        <span data-i18n="fieldRejected">已否决的方案</span>
+        <div class="rejected-editor" id="rejectedEditor"></div>
+        <button class="ghost-btn small" type="button" id="addRejectedBtn" data-i18n="addRejected">+ 添加一条</button>
+      </div>
+      <label class="check span2"><input type="checkbox" id="fieldPin" /> <span data-i18n="fieldPin">固定（不参与预算截断、衰减更慢）</span></label>
+    </div>
+    <footer class="dialog-foot">
+      <button class="ghost-btn" type="button" data-close="entryDialog" data-i18n="cancel">取消</button>
+      <button class="primary-btn" type="submit" data-i18n="save">保存</button>
+    </footer>
+  </form>
+</dialog>
 
-function applyI18n() {
-  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
-  document.title = T().title;
-  for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = T()[node.dataset.i18n];
-  for (const node of document.querySelectorAll('[data-i18n-placeholder]')) node.placeholder = T()[node.dataset.i18nPlaceholder];
-  document.getElementById('lang').textContent = lang === 'zh' ? 'EN' : '中文';
-}
+<dialog id="bankDialog" class="dialog">
+  <form method="dialog" id="bankForm" novalidate>
+    <header class="dialog-head">
+      <h2 data-i18n="editBank">编辑记忆库</h2>
+      <button class="icon-btn" type="button" data-close="bankDialog" aria-label="close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+    <div class="form-grid">
+      <label class="field span2"><span data-i18n="fieldTitle">名称</span><input id="bankFieldTitle" type="text" required /></label>
+      <label class="field span2"><span data-i18n="fieldDesc">描述</span><input id="bankFieldDesc" type="text" /></label>
+    </div>
+    <footer class="dialog-foot">
+      <button class="ghost-btn" type="button" data-close="bankDialog" data-i18n="cancel">取消</button>
+      <button class="primary-btn" type="submit" data-i18n="save">保存</button>
+    </footer>
+  </form>
+</dialog>
 
-async function load() {
-  const response = await fetch('/api/state');
-  if (!response.ok) throw new Error('HTTP ' + response.status);
-  state = await response.json();
-  document.getElementById('path').textContent = state.file;
-  const bankSelect = document.getElementById('bank');
-  const current = bankSelect.value;
-  bankSelect.innerHTML = '<option value="">' + esc(T().allBanks) + '</option>' + state.banks.map((bank) =>
-    '<option value="' + esc(bank.id) + '">' + esc(bank.title) + (bank.archivedAt ? esc(T().disabledSuffix) : '') + '</option>').join('');
-  bankSelect.value = current;
-  render();
-  renderPanels();
-}
+<dialog id="confirmDialog" class="dialog dialog-small">
+  <form method="dialog">
+    <header class="dialog-head"><h2 id="confirmTitle">确认</h2></header>
+    <p class="confirm-text" id="confirmText"></p>
+    <footer class="dialog-foot">
+      <button class="ghost-btn" value="cancel" data-i18n="cancel">取消</button>
+      <button class="danger-btn" value="ok" id="confirmOk" data-i18n="confirm">确认</button>
+    </footer>
+  </form>
+</dialog>
 
-function render() {
-  const bank = document.getElementById('bank').value;
-  const status = document.getElementById('status').value;
-  const query = document.getElementById('query').value.trim().toLowerCase();
-  const rows = state.entries
-    .filter((entry) => !bank || entry.bankId === bank)
-    .filter((entry) => status === 'all' || entry.status === status)
-    .filter((entry) => !query || [entry.topic, entry.claim, entry.detail, ...(entry.rejected || []).map((item) => item.option)]
-      .join(' ').toLowerCase().includes(query))
-    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-
-  document.getElementById('count').textContent = T().count(rows.length, state.banks.length);
-  if (!rows.length) {
-    document.getElementById('rows').innerHTML = '<tr><td colspan="6" class="empty">' + esc(T().empty) + '</td></tr>';
-    return;
-  }
-
-  document.getElementById('rows').innerHTML = rows.map((entry) => {
-    const open = expanded.has(entry.id);
-    const rejected = (entry.rejected || []).length
-      ? '<ul class="rejected">' + entry.rejected.map((item) => '<li>' + esc(T().rejected) + esc(item.option) + (item.reason ? ' (' + esc(item.reason) + ')' : '') + '</li>').join('') + '</ul>'
-      : '';
-    const chain = [
-      entry.supersedes ? esc(T().supersedes) + ' ' + esc(entryTopic(entry.supersedes)) : '',
-      entry.supersededBy ? esc(T().supersededBy) + ' ' + esc(entryTopic(entry.supersededBy)) + (lang === 'zh' ? esc(T().supersededByTail) : '') : '',
-    ].filter(Boolean).join(' · ');
-    return '<tr class="row" data-id="' + esc(entry.id) + '">' +
-      '<td class="topic">' + esc(entry.topic) + '<div class="path">' + esc(bankTitle(entry.bankId)) + '</div></td>' +
-      '<td class="claim">' + esc(entry.claim) + '</td>' +
-      '<td class="kind-' + esc(entry.kind) + '">' + esc(T().kind[entry.kind] || entry.kind) + '</td>' +
-      '<td class="status-' + esc(entry.status) + '">' + esc(T().status[entry.status] || entry.status) + (entry.pinned ? ' · ' + esc(T().pin) : '') + '</td>' +
-      '<td class="path">' + esc(new Date(entry.updatedAt).toLocaleString()) + '</td>' +
-      '<td class="ops">' +
-        '<button data-act="pin" data-id="' + esc(entry.id) + '">' + esc(entry.pinned ? T().unpin : T().pin) + '</button>' +
-        (entry.status === 'active'
-          ? '<button data-act="archive" data-id="' + esc(entry.id) + '">' + esc(T().disable) + '</button>'
-          : '<button data-act="restore" data-id="' + esc(entry.id) + '">' + esc(T().enable) + '</button>') +
-        '<button class="danger" data-act="delete" data-id="' + esc(entry.id) + '">' + esc(T().deleteEntry) + '</button>' +
-      '</td></tr>' +
-      (open ? '<tr class="detail"><td colspan="6">' +
-        (entry.detail ? '<pre>' + esc(entry.detail) + '</pre>' : '<div class="path">' + esc(T().noDetail) + '</div>') +
-        rejected +
-        (chain ? '<div class="path">' + chain + '</div>' : '') +
-        '</td></tr>' : '');
-  }).join('');
-}
-
-function renderPanels() {
-  renderBanks();
-  renderLinks();
-}
-
-async function send(url, options = {}) {
-  const response = await fetch(url, { headers: { 'content-type': 'application/json' }, ...options });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || 'failed');
-  state = body;
-  render();
-  renderPanels();
-  return body;
-}
-
-function renderBanks() {
-  document.getElementById('bankCount').textContent = T().bankCount(state.banks.length);
-  document.getElementById('bankList').innerHTML = state.banks.map((bank) => {
-    const rows = state.entries.filter((entry) => entry.bankId === bank.id);
-    const active = rows.filter((entry) => entry.status === 'active').length;
-    return '<div class="bank-row">' +
-      '<input type="text" class="b-title" data-id="' + esc(bank.id) + '" value="' + esc(bank.title) + '" />' +
-      '<span class="badge">' + esc(bank.kind) + (bank.archivedAt ? esc(T().disabledBadge) : '') + '</span>' +
-      '<span class="path">' + esc(T().ratio(active, rows.length)) + '</span>' +
-      '<input type="text" class="b-desc" data-id="' + esc(bank.id) + '" placeholder="' + esc(lang === 'zh' ? '一句话描述' : 'one-line description') + '" value="' + esc(bank.description || '') + '" />' +
-      '<button data-bank="' + esc(bank.id) + '" data-act="' + (bank.archivedAt ? 'restore' : 'archive') + '">' + esc(bank.archivedAt ? T().enable : T().disable) + '</button>' +
-      '<button class="danger" data-bank="' + esc(bank.id) + '" data-act="delete">' + esc(T().deleteBank) + '</button>' +
-      '</div>';
-  }).join('');
-}
-
-function renderLinks() {
-  const source = document.getElementById('linkSource');
-  const previous = source.value;
-  const workspace = state.banks.find((bank) => bank.kind === 'workspace') || state.banks[0];
-  source.innerHTML = state.banks.map((bank) =>
-    '<option value="' + esc(bank.id) + '">' + esc(bank.title) + '</option>').join('');
-  source.value = previous && state.banks.some((bank) => bank.id === previous) ? previous : (workspace ? workspace.id : '');
-
-  const from = source.value;
-  const targets = state.banks.filter((bank) => bank.id !== from);
-  if (!targets.length) {
-    document.getElementById('linkList').innerHTML = '<div class="path">' + esc(T().onlyOneBank) + '</div>';
-    return;
-  }
-  document.getElementById('linkList').innerHTML = targets.map((bank) => {
-    const link = state.links.find((item) => item.fromBankId === from && item.toBankId === bank.id);
-    return '<div class="link-row" data-from="' + esc(from) + '" data-to="' + esc(bank.id) + '">' +
-      '<span class="grow">' + esc(bank.title) + (bank.archivedAt ? esc(T().disabledSuffix) : '') + '</span>' +
-      '<label class="path"><input type="checkbox" data-field="recall"' + (link && link.recall ? ' checked' : '') + ' /> ' + esc(T().injected) + '</label>' +
-      '<label class="path"><input type="checkbox" data-field="query"' + (!link || link.query ? ' checked' : '') + ' /> ' + esc(T().searchable) + '</label>' +
-      '</div>';
-  }).join('');
-}
-
-function reportError(error) {
-  const box = document.getElementById('err');
-  box.hidden = false;
-  box.textContent = T().loadFailed + error.message;
-}
-
-document.getElementById('rows').addEventListener('click', async (event) => {
-  const button = event.target.closest('button[data-act]');
-  if (button) {
-    event.stopPropagation();
-    const { act, id } = button.dataset;
-    if (act === 'delete' && !confirm(T().deleteEntryConfirm)) return;
-    try {
-      const response = await fetch('/api/entry/' + encodeURIComponent(id) + '/' + act, { method: 'POST' });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'failed');
-      state = body;
-      render();
-      renderPanels();
-    } catch (error) {
-      const box = document.getElementById('err');
-      box.hidden = false;
-      box.textContent = T().opFailed + error.message;
-    }
-    return;
-  }
-  const row = event.target.closest('tr.row');
-  if (!row) return;
-  const id = row.dataset.id;
-  if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
-  render();
-});
-
-document.getElementById('bankList').addEventListener('change', async (event) => {
-  const target = event.target;
-  const id = target.dataset.id;
-  if (!id) return;
-  const body = target.classList.contains('b-title') ? { title: target.value }
-    : target.classList.contains('b-desc') ? { description: target.value }
-    : null;
-  if (!body) return;
-  try { await send('/api/bank/' + encodeURIComponent(id), { method: 'POST', body: JSON.stringify(body) }); }
-  catch (error) { reportError(error); }
-});
-
-document.getElementById('bankList').addEventListener('click', async (event) => {
-  const button = event.target.closest('button[data-act]');
-  if (!button) return;
-  const { bank, act } = button.dataset;
-  if (act === 'delete' && !confirm(T().deleteBankConfirm)) return;
-  try { await send('/api/bank/' + encodeURIComponent(bank) + '/' + act, { method: 'POST' }); }
-  catch (error) { reportError(error); }
-});
-
-document.getElementById('createBank').addEventListener('click', async () => {
-  const title = document.getElementById('newBankTitle').value.trim();
-  if (!title) return;
-  const description = document.getElementById('newBankDesc').value.trim();
-  try {
-    await send('/api/bank', { method: 'POST', body: JSON.stringify({ title, description }) });
-    document.getElementById('newBankTitle').value = '';
-    document.getElementById('newBankDesc').value = '';
-  } catch (error) { reportError(error); }
-});
-
-document.getElementById('linkSource').addEventListener('change', renderLinks);
-
-document.getElementById('linkList').addEventListener('change', async (event) => {
-  const row = event.target.closest('.link-row');
-  if (!row) return;
-  const recall = row.querySelector('[data-field="recall"]').checked;
-  const query = row.querySelector('[data-field="query"]').checked;
-  const from = row.dataset.from;
-  const to = row.dataset.to;
-  try {
-    if (!recall && !query) {
-      await send('/api/link?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to), { method: 'DELETE' });
-    } else {
-      await send('/api/link', { method: 'POST', body: JSON.stringify({ fromBankId: from, toBankId: to, recall, query }) });
-    }
-  } catch (error) { reportError(error); }
-});
-
-for (const id of ['bank', 'status', 'query']) {
-  document.getElementById(id).addEventListener('input', render);
-}
-document.getElementById('refresh').addEventListener('click', () => load().catch(reportError));
-
-document.getElementById('lang').addEventListener('click', async () => {
-  lang = lang === 'zh' ? 'en' : 'zh';
-  localStorage.setItem('memstack.lang', lang);
-  applyI18n();
-  await load().catch(reportError);
-});
-
-applyI18n();
-load().catch(reportError);
-</script>
+<script type="module" src="/app.js"></script>
 </body>
 </html>
