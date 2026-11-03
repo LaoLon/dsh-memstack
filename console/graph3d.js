@@ -28,12 +28,46 @@ const REST_LENGTH = {
 }
 
 const EDGE_ALPHA = {
-  contains: 0.16,
-  supersede: 0.55,
-  relation: 0.62,
-  topic: 0.18,
-  tag: 0.16,
-  'bank-link': 0.7,
+  contains: 0.34,
+  supersede: 0.58,
+  relation: 0.64,
+  topic: 0.42,
+  tag: 0.34,
+  'bank-link': 0.72,
+}
+
+/**
+ * Base stroke width per edge type. Structural edges (contains / topic) carry a
+ * small force weight, so a width derived from weight alone lands under one
+ * device pixel and disappears on a dark canvas.
+ */
+const EDGE_WIDTH = {
+  contains: 1.15,
+  supersede: 1.9,
+  relation: 1.75,
+  topic: 1,
+  tag: 0.95,
+  'bank-link': 2.2,
+}
+
+function depthAlpha(depth) {
+  return Math.min(1, Math.max(0.55, 1.35 - depth / 1700))
+}
+
+/**
+ * Alpha and stroke width of one edge, in CSS pixels. Exported so `node --test`
+ * can hold the legibility floor: an edge thinner than ~1px or dimmer than the
+ * canvas reads as "no edges at all", which is exactly the 2026-11-03 report.
+ */
+export function edgeStyle(edge, { scale = 1, depth = 0 } = {}) {
+  const type = edge?.type ?? 'contains'
+  const weight = Number.isFinite(edge?.weight) ? Math.max(0.25, edge.weight) : 1
+  const grow = Math.min(1.55, 0.75 + weight * 0.55)
+  return {
+    alpha: Math.min(1, (EDGE_ALPHA[type] ?? 0.3) * depthAlpha(depth)),
+    width: Math.max(0.9, Math.min(3.4, (EDGE_WIDTH[type] ?? 1.1) * grow * Math.max(0.7, scale))),
+    dashed: type === 'topic' || type === 'tag',
+  }
 }
 
 export const GRAPH_KIND_COLORS = {
@@ -252,10 +286,6 @@ export function createGraphView(canvas, options = {}) {
     return base + (node.pinned ? 1.6 : 0) + (node.retention ?? 0.5) * 1.4
   }
 
-  function depthAlpha(depth) {
-    return Math.min(1, Math.max(0.3, 1.35 - depth / 1700))
-  }
-
   function simulate() {
     if (alpha < 0.003) return
     const nodes = data.nodes
@@ -396,7 +426,8 @@ export function createGraphView(canvas, options = {}) {
 
   function drawEdge(edge, a, b, focus) {
     let color = edgeColor(edge)
-    let alphaValue = (EDGE_ALPHA[edge.type] ?? 0.3) * depthAlpha((a.depth + b.depth) / 2)
+    const style = edgeStyle(edge, { scale: (a.scale + b.scale) / 2, depth: (a.depth + b.depth) / 2 })
+    let alphaValue = style.alpha
     if (focus) {
       const connected = focus.has(edge.source) && focus.has(edge.target)
       if (!connected) alphaValue *= 0.3
@@ -405,8 +436,8 @@ export function createGraphView(canvas, options = {}) {
     if (highlight && !(highlight.has(edge.source) && highlight.has(edge.target))) alphaValue *= 0.08
     ctx.globalAlpha = alphaValue
     ctx.strokeStyle = color
-    ctx.lineWidth = Math.max(0.5, Math.min(3.2, (edge.weight ?? 1) * 0.9 * ((a.scale + b.scale) / 2) * 1.15))
-    if (edge.type === 'topic' || edge.type === 'tag') {
+    ctx.lineWidth = style.width
+    if (style.dashed) {
       ctx.setLineDash([4 * Math.max(0.7, a.scale), 6 * Math.max(0.7, a.scale)])
     } else {
       ctx.setLineDash([])
