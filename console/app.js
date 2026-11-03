@@ -426,6 +426,7 @@ function initGraph() {
         state.selectedId = null
         state.drawerBankId = null
         renderDrawer()
+        writeHash(state.view)
         return
       }
       pauseGraphRotation()
@@ -433,10 +434,12 @@ function initGraph() {
         state.selectedId = null
         state.drawerBankId = node.id
         renderDrawer()
+        writeHash(state.view)
       } else {
         state.selectedId = node.id
         state.drawerBankId = null
         renderDrawer()
+        writeHash(`entry=${encodeURIComponent(node.id)}`)
       }
     },
     onHover() {},
@@ -995,10 +998,20 @@ function confirmAction(text) {
 
 // ------------------------------------------------------------------ events
 
-function setView(view, { writeHash = true } = {}) {
+function writeHash(value) {
+  if (location.hash.slice(1) !== value) history.replaceState(null, '', `#${value}`)
+}
+
+function setView(view, { writeHash: write = true } = {}) {
   if (!['graph', 'memories', 'banks', 'data'].includes(view)) view = 'graph'
   state.view = view
-  if (writeHash && location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}`)
+  if (state.selectedId || state.drawerBankId) {
+    state.selectedId = null
+    state.drawerBankId = null
+    graphView?.select(null)
+    renderDrawer()
+  }
+  if (write) writeHash(view)
   $$('.nav-item').forEach((item) => item.classList.toggle('is-active', item.dataset.view === view))
   $$('.view').forEach((section) => section.classList.toggle('is-active', section.dataset.view === view))
   if (view === 'graph') {
@@ -1082,6 +1095,7 @@ function bindEvents() {
       renderDrawer()
       syncDrawerInset()
       graphView?.focus(row.dataset.entry)
+      writeHash(`entry=${encodeURIComponent(row.dataset.entry)}`)
     }
   })
 
@@ -1090,6 +1104,7 @@ function bindEvents() {
     state.drawerBankId = null
     renderDrawer()
     graphView?.select(null)
+    writeHash(state.view)
   })
 
   $('#drawerBody').addEventListener('click', async (event) => {

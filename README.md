@@ -132,6 +132,8 @@ npm run console
 
 条目抽屉包含：留存曲线、详情、否决理由、关系、替代链、元信息，以及“仍然成立 / 标记过时 / 编辑 / 删除 / 固定”等操作。
 
+页面状态写在地址栏，可直接分享或刷新还原：`#graph`、`#memories`、`#banks`、`#data`，打开条目时为 `#entry=<id>`。
+
 ![条目详情](docs/assets/entry-drawer.png)
 
 浅色主题：
