@@ -254,3 +254,57 @@ test('memory_read 展示关系与取代链，memory_search 标注留存阶段', 
   assert.ok(rows.every((row) => typeof row.retention === 'number' && row.stage))
   assert.match(search.output.render({ query: 'chain' }, rows)[0].text, /留存/)
 })
+
+/**
+ * The Host validates every tool result against `output.schema` with
+ * `additionalProperties: false`, so a field the implementation returns but the
+ * schema forgot rejects the whole call at runtime. That is exactly how
+ * `memory_inventory` broke on 2026-11-03, so the drift is checked here instead
+ * of being discovered by a live session.
+ */
+function assertConforms(schema, value, path) {
+  if (schema.type === 'object') {
+    assert.ok(value !== null && typeof value === 'object' && !Array.isArray(value), `${path} should be an object`)
+    for (const key of schema.required ?? []) assert.ok(key in value, `${path}.${key} is required but missing`)
+    if (schema.additionalProperties === false) {
+      const allowed = new Set(Object.keys(schema.properties ?? {}))
+      for (const key of Object.keys(value)) assert.ok(allowed.has(key), `${path}.${key} is returned but not declared in the schema`)
+    }
+    for (const [key, sub] of Object.entries(schema.properties ?? {})) {
+      if (value[key] !== undefined) assertConforms(sub, value[key], `${path}.${key}`)
+    }
+    return
+  }
+  if (schema.type === 'array') {
+    assert.ok(Array.isArray(value), `${path} should be an array`)
+    if (schema.items) value.forEach((item, index) => assertConforms(schema.items, item, `${path}[${index}]`))
+    return
+  }
+  if (schema.enum) assert.ok(schema.enum.includes(value), `${path}=${value} is outside the declared enum`)
+  if (schema.type === 'string') assert.equal(typeof value, 'string', `${path} should be a string`)
+  if (schema.type === 'number') assert.equal(typeof value, 'number', `${path} should be a number`)
+  if (schema.type === 'boolean') assert.equal(typeof value, 'boolean', `${path} should be a boolean`)
+}
+
+test('每个工具的返回值都符合它自己声明的输出 schema', async () => {
+  const { store, bankId } = makeWorkspaceStore()
+  store.writeEntry({ bankId, topic: 'conf.other', kind: 'gotcha', claim: '另一条用于关系验证' })
+  const tools = memoryTools(fakeRuntime(store, bankId))
+
+  const calls = {
+    memory_write: { topic: 'conf.write', claim: '输出与 schema 一致', kind: 'decision', tags: ['conformance'], rejected: [{ option: '不测', reason: '宿主会拒绝非法输出' }] },
+    memory_search: { query: 'conf' },
+    memory_read: { topic: 'conf.write' },
+    memory_forget: { topic: 'conf.other', mode: 'archive' },
+    memory_review: { topic: 'conf.write', verdict: 'still-true' },
+    memory_relate: { source: 'conf.write', target: 'conf.other', type: 'related' },
+    memory_inventory: {},
+  }
+
+  for (const tool of tools) {
+    const args = calls[tool.name]
+    assert.ok(args, `${tool.name} 缺少一致性测试入参`)
+    const value = await tool.execute(args, {})
+    assertConforms(tool.output.schema, value, tool.name)
+  }
+})

@@ -405,6 +405,8 @@ $node = 'C:\Users\<you>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\
 - 每个数据库测试用独立临时 home，结束时先 `db.close()` 再 `rm`；Windows 上打开的文件不能删。
 - 并发测试开两个 `DatabaseSync` 连接，模拟 Host + 控制台；断言失败提交不会写入。
 - 服务端集成测试要等子进程退出后再清理临时目录。
+- **工具输出 schema 必须与返回值逐字段同步。** Host 以 `additionalProperties: false` 校验每次工具结果，多出任何一个未声明的字段，整次调用直接失败（表现为 `tool "..." returned invalid output: "value[0].tags" is not a declared property`）。2026-11-03 的 v3 迁移里 `memory_read`/`memory_forget`/`memory_inventory` 就是这么坏的：`query.js` 加了字段、`tools.js` 的 schema 没跟上。`test/tools.spec.js` 末尾的"每个工具的返回值都符合它自己声明的输出 schema"用例会递归比对，改任何工具输出都会先在这里失败。
+- 该类修复**必须重启 Host 才生效**：profile 重组是热的，但已加载的 Host 模块不会被替换。
 
 ---
 
