@@ -28,12 +28,12 @@ const REST_LENGTH = {
 }
 
 const EDGE_ALPHA = {
-  contains: 0.34,
-  supersede: 0.58,
-  relation: 0.64,
-  topic: 0.42,
-  tag: 0.34,
-  'bank-link': 0.72,
+  contains: 0.45,
+  supersede: 0.66,
+  relation: 0.7,
+  topic: 0.5,
+  tag: 0.42,
+  'bank-link': 0.78,
 }
 
 /**
@@ -55,18 +55,25 @@ function depthAlpha(depth) {
 }
 
 /**
- * Alpha and stroke width of one edge, in CSS pixels. Exported so `node --test`
- * can hold the legibility floor: an edge thinner than ~1.4px or dimmer than the
- * canvas reads as "no edges at all", which is exactly the 2026-11-03 report.
+ * Alpha, stroke width and halo of one edge, in CSS pixels. Exported so
+ * `node --test` can hold the legibility rules: an edge thinner than ~1.4px or
+ * dimmer than the canvas reads as "no edges at all" (2026-11-03 report), and a
+ * flat opaque stroke over 3px reads as a bar, so brightness comes from the halo
+ * instead of more width.
  */
 export function edgeStyle(edge, { scale = 1, depth = 0 } = {}) {
   const type = edge?.type ?? 'contains'
   const weight = Number.isFinite(edge?.weight) ? Math.max(0.25, edge.weight) : 1
   const grow = Math.min(1.55, 0.75 + weight * 0.55)
+  const alpha = Math.min(1, (EDGE_ALPHA[type] ?? 0.3) * depthAlpha(depth))
+  const width = Math.max(1.4, Math.min(6.4, (EDGE_WIDTH[type] ?? 2.2) * grow * Math.max(0.7, scale)))
+  const dashed = type === 'topic' || type === 'tag'
   return {
-    alpha: Math.min(1, (EDGE_ALPHA[type] ?? 0.3) * depthAlpha(depth)),
-    width: Math.max(1.4, Math.min(6.4, (EDGE_WIDTH[type] ?? 2.2) * grow * Math.max(0.7, scale))),
-    dashed: type === 'topic' || type === 'tag',
+    alpha,
+    width,
+    dashed,
+    // Dashed edges stay glow-free: a soft halo under a 4px dash pattern looks smeared.
+    glow: dashed ? null : { width: Math.min(10, width * 2.6), alpha: Math.min(0.32, alpha * 0.38) },
   }
 }
 
@@ -434,9 +441,7 @@ export function createGraphView(canvas, options = {}) {
       else alphaValue = Math.min(1, alphaValue * 2.1)
     }
     if (highlight && !(highlight.has(edge.source) && highlight.has(edge.target))) alphaValue *= 0.08
-    ctx.globalAlpha = alphaValue
     ctx.strokeStyle = color
-    ctx.lineWidth = style.width
     if (style.dashed) {
       ctx.setLineDash([4 * Math.max(0.7, a.scale), 6 * Math.max(0.7, a.scale)])
     } else {
@@ -447,6 +452,17 @@ export function createGraphView(canvas, options = {}) {
     const midX = (a.x + b.x) / 2 + (a.y - b.y) * 0.035
     const midY = (a.y + b.y) / 2 + (b.x - a.x) * 0.035
     ctx.quadraticCurveTo(midX, midY, b.x, b.y)
+
+    // Halo first: one wide, faint pass under the same path makes the edge read as
+    // light instead of a solid bar, without the cost of shadowBlur per edge.
+    if (style.glow && alphaValue > 0.05) {
+      ctx.globalAlpha = Math.min(alphaValue, style.glow.alpha)
+      ctx.lineWidth = style.glow.width
+      ctx.stroke()
+    }
+
+    ctx.globalAlpha = alphaValue
+    ctx.lineWidth = style.width
     ctx.stroke()
     ctx.setLineDash([])
 

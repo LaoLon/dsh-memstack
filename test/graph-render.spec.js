@@ -47,3 +47,18 @@ test('未知类型的边按包含边兜底，不会变成 0', () => {
   const bare = edgeStyle(undefined)
   assert.ok(bare.alpha > 0 && bare.width >= 1.4)
 })
+
+test('实线边带一层柔光，虚线边不带', () => {
+  const solid = edgeStyle({ type: 'contains', weight: 0.35 }, { scale: 1, depth: 1050 })
+  assert.ok(solid.glow, '实线边应有柔光')
+  assert.ok(solid.glow.width >= solid.width * 2, `柔光宽度 ${solid.glow.width} 不比主线宽`)
+  assert.ok(solid.glow.alpha < solid.alpha * 0.5, `柔光 alpha ${solid.glow.alpha} 太亮`)
+  assert.ok(solid.glow.width <= 10, '柔光宽度要有上限，避免糊成一片')
+
+  for (const type of ['topic', 'tag']) {
+    assert.equal(edgeStyle({ type }).glow, null, `${type} 不应带柔光`)
+  }
+  for (const type of ['supersede', 'relation', 'bank-link']) {
+    assert.ok(edgeStyle({ type }).glow, `${type} 应有柔光`)
+  }
+})
