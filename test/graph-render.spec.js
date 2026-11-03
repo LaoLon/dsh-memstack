@@ -16,7 +16,17 @@ test('结构边（contains/topic）在权重 0.35 时仍然可见', () => {
   // 2026-11-03 反馈"只看到点、看不到边"：contains 权重 0.35、alpha 0.16、线宽 0.36px。
   const contains = edgeStyle({ type: 'contains', weight: 0.35 }, { scale: 1, depth: 1050 })
   assert.ok(contains.alpha >= 0.24, `contains alpha=${contains.alpha}`)
-  assert.ok(contains.width >= 2, `contains width=${contains.width}`)
+  assert.ok(contains.width >= 1.4, `contains width=${contains.width}`)
+})
+
+test('主线不过分粗：亮度交给柔光，实心线不超过 2px', () => {
+  // 2026-11-03 第二轮反馈："确实有点偏粗"——2.2px 的实心线看起来像色块。
+  for (const type of ['contains', 'topic', 'tag']) {
+    const style = edgeStyle({ type, weight: 0.35 }, { scale: 1, depth: 1050 })
+    assert.ok(style.width <= 2, `${type} 主线 ${style.width}px 太粗`)
+  }
+  const contains = edgeStyle({ type: 'contains', weight: 0.35 }, { scale: 1, depth: 1050 })
+  assert.ok(contains.glow.width >= contains.width * 2, '细主线要靠更宽的柔光撑起亮度')
 })
 
 test('关系边比包含边更显眼', () => {

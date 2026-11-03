@@ -39,15 +39,16 @@ const EDGE_ALPHA = {
 /**
  * Base stroke width per edge type. Structural edges (contains / topic) carry a
  * small force weight, so a width derived from weight alone lands under one
- * device pixel and disappears on a dark canvas.
+ * device pixel and disappears on a dark canvas. Kept deliberately modest: the
+ * halo carries the brightness, and a solid stroke past ~2px reads as a bar.
  */
 const EDGE_WIDTH = {
-  contains: 2.3,
-  supersede: 3.7,
-  relation: 3.4,
-  topic: 2,
-  tag: 1.9,
-  'bank-link': 4.2,
+  contains: 1.7,
+  supersede: 2.8,
+  relation: 2.5,
+  topic: 1.5,
+  tag: 1.4,
+  'bank-link': 3.2,
 }
 
 function depthAlpha(depth) {
