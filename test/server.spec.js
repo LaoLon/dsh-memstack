@@ -2,12 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Store } from '../lib/store.js'
-import { saveState, statePath } from '../lib/persist.js'
+import { commitStore, databasePath, getRevision, openHomeDatabase } from '../lib/database.js'
+import { APP_VERSION } from '../lib/version.js'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 
@@ -37,7 +39,12 @@ test('console server：状态、写入、复习、关系、图谱、导出与幂
   const store = new Store()
   const { bankId } = store.ensureWorkspaceBank('ws-test', 'test-bank')
   store.writeEntry({ bankId, topic: 'seed.topic', kind: 'decision', claim: '种子结论' })
-  await saveState(statePath(home), store.toJSON())
+  const db = openHomeDatabase(home)
+  try {
+    commitStore(db, store, { expectedRevision: getRevision(db) })
+  } finally {
+    db.close()
+  }
 
   const port = await freePort()
   const child = spawn(process.execPath, [join(ROOT, 'console', 'server.mjs')], {
@@ -46,7 +53,10 @@ test('console server：状态、写入、复习、关系、图谱、导出与幂
     stdio: 'ignore',
   })
   t.after(async () => {
-    child.kill()
+    if (child.exitCode === null) {
+      child.kill()
+      await new Promise((resolve) => child.once('exit', resolve))
+    }
     await rm(home, { recursive: true, force: true })
   })
 
@@ -56,6 +66,9 @@ test('console server：状态、写入、复习、关系、图谱、导出与幂
   const health = await (await fetch(`${base}/api/health`)).json()
   assert.equal(health.ok, true)
   assert.equal(health.homeDir, home)
+  assert.equal(health.storage, 'sqlite')
+  assert.equal(health.dbFile, databasePath(home))
+  assert.equal(health.version, APP_VERSION)
 
   const state = await (await fetch(`${base}/api/state`)).json()
   assert.equal(state.banks.length, 1)
@@ -130,7 +143,8 @@ test('console server：状态、写入、复习、关系、图谱、导出与幂
   assert.equal(imported.report.entriesAdded, 0)
   assert.equal(imported.report.entriesSkipped, 2)
   assert.equal(imported.entries.length, 2)
-  assert.ok(imported.backup)
+  assert.match(imported.backup, /memstack\.db\.[\dT]+\.bak$/)
+  assert.equal(existsSync(imported.backup), true)
 
   const bad = await fetch(`${base}/api/entry`, {
     method: 'POST',

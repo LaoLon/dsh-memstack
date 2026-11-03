@@ -1,11 +1,11 @@
-/** MemStack console: local read/write HTTP view over $DSH_HOME/memstack/state.json. No DSH APIs. */
+/** MemStack console: local read/write HTTP view over $DSH_HOME/memstack/memstack.db. No DSH APIs. */
 
 import { createServer } from 'node:http'
-import { copyFile, readFile, stat } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { Store, RELATION_TYPES } from '../lib/store.js'
+import { RELATION_TYPES } from '../lib/store.js'
 import { buildGraph, summarize } from '../lib/graph.js'
 import { describeDecay, KIND_STABILITY } from '../lib/decay.js'
 import { entryView, reviewQueue, visibleBanks } from '../lib/query.js'
@@ -16,12 +16,14 @@ import {
   renderMarkdown,
   serializeBundle,
 } from '../lib/portable.js'
-import { loadState, resolveHomeDir, saveState, statePath } from '../lib/persist.js'
+import { backupDatabase, resolveHomeDir, StoreDatabase } from '../lib/database.js'
 import { DEFAULT_CONFIG } from '../lib/config.js'
+import { APP_VERSION } from '../lib/version.js'
 
 const port = Number(process.env.MEMSTACK_CONSOLE_PORT ?? 7788)
 const homeDir = process.env.MEMSTACK_HOME?.trim() || resolveHomeDir()
-const stateFile = statePath(homeDir)
+const database = new StoreDatabase(homeDir, { logger: console })
+const dbFile = database.file
 const here = dirname(fileURLToPath(import.meta.url))
 const MAX_BODY_BYTES = 32 * 1024 * 1024
 
@@ -55,9 +57,8 @@ function fail(response, error) {
   json(response, bad ? 400 : 500, { error: message })
 }
 
-async function readStore() {
-  const raw = await loadState(stateFile)
-  return raw ? Store.fromJSON(raw) : new Store()
+function readStore() {
+  return database.readStore()
 }
 
 async function readJson(request) {
@@ -93,7 +94,8 @@ function decorate(store) {
   })
   const banks = Object.values(store.state.banks)
   return {
-    file: stateFile,
+    file: dbFile,
+    storage: 'sqlite',
     generatedAt: now.toISOString(),
     banks,
     entries,
@@ -125,12 +127,7 @@ function bankIdsFromQuery(store, query) {
 /** Serializes state mutations: read-modify-write requests must not interleave. */
 let chain = Promise.resolve()
 function mutate(handler) {
-  const run = chain.then(async () => {
-    const store = await readStore()
-    const result = await handler(store)
-    await saveState(stateFile, store.toJSON())
-    return { store, result }
-  })
+  const run = chain.then(() => database.mutate(handler))
   chain = run.catch(() => {})
   return run
 }
@@ -293,7 +290,7 @@ const server = createServer(async (request, response) => {
         })
       }
       const bundle = buildBundle(store.toJSON(), {
-        appVersion: '0.2.0',
+        appVersion: APP_VERSION,
         machine: hostname(),
         platform: process.platform,
         dshHome: homeDir,
@@ -307,20 +304,24 @@ const server = createServer(async (request, response) => {
       const body = await readJson(request)
       const mode = body.mode === 'replace' ? 'replace' : 'merge'
       const bundle = parseBundle(body.bundle ?? body)
-      let backup = null
+      const backup = `${dbFile}.${fileStamp()}.bak`
       try {
-        await stat(stateFile)
-        backup = `${stateFile}.${fileStamp()}.bak`
-        await copyFile(stateFile, backup)
-      } catch {
-        // First import on a fresh machine: nothing to back up.
+        await backupDatabase(database.db, backup)
+      } catch (error) {
+        throw new Error(`backup-failed:${error.message}`)
       }
       const { store, result } = await mutate((state) => importState(state, bundle, { mode }))
       return json(response, 200, { ...decorate(store), report: result, backup })
     }
 
     if (request.method === 'GET' && url.pathname === '/api/health') {
-      return json(response, 200, { ok: true, stateFile, homeDir, version: '0.2.0' })
+      return json(response, 200, {
+        ok: true,
+        dbFile,
+        storage: 'sqlite',
+        homeDir,
+        version: APP_VERSION,
+      })
     }
 
     return json(response, 404, { error: 'not-found' })
@@ -331,5 +332,6 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, '127.0.0.1', () => {
   console.log(`MemStack console: http://127.0.0.1:${port}`)
-  console.log(`state file: ${stateFile}`)
+  console.log(`database: ${dbFile}`)
 })
+server.on('close', () => database.close())

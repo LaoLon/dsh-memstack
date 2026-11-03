@@ -1,6 +1,6 @@
 {
   "name": "@local/memstack",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Memory banks for DeepSeek Harness: supersede chains, a forgetting curve, a 3D relation graph and portable export/import.",
@@ -27,6 +27,7 @@
   },
   "scripts": {
     "test": "node --test",
+    "home": "node scripts/home.mjs",
     "console": "node console/server.mjs",
     "demo": "node console/demo.mjs",
     "export": "node console/cli.mjs export",

@@ -2,7 +2,7 @@
 
 > 版本：2.0（已实施）
 > 日期：2026-11-03
-> 状态：V1–V7 已完成，83 项测试全绿；实施记录见 [development.md §12](./development.md)
+> 状态：V1–V7 已完成；后续 v3 已把本地真源从 `state.json` 换成 SQLite，当前 91 项测试全绿。实施记录见 [development.md §12](./development.md) 与 [§13](./development.md)
 > 前置：[design.md](./design.md) v2.0、[development.md](./development.md)
 > 本文只记录 v2 的增量决策；v1 的契约（topic 唯一 active、supersede 链、rejected[]、注入只追加）不变。
 
@@ -16,7 +16,7 @@ v1 解决的是"旧结论反复出现"。v2 要解决的是**记忆随时间与�
 |---|---|
 | 记忆只增不减，一年后库里全是"还成立吗" | **遗忘曲线**：每条记忆有稳定度与留存率，按复习/召回强化，注入按留存加权，沉寂条目降权但不静默删除 |
 | 条目之间只有 topic 取代关系，看不到"这件事牵动了什么" | **图谱**：显式关系（refines / depends / contradicts / related）+ 派生的主题同族、共享标签、同库归属，形成可探索的网络 |
-| 记忆藏在 `state.json` 里，换机器只能整个目录拷 | **可迁移**：带版本的 JSON bundle + Markdown 投影；导入支持合并/替换、ID 重映射、冲突报告 |
+| 记忆藏在 `state.json` 里，换机器只能整个目录拷 | **可迁移**：带版本的 JSON bundle + Markdown 投影；导入支持合并/替换、ID 重映射、冲突报告（v3 起本地真源为 SQLite，bundle 格式不变） |
 
 **不做**（仍然是 v2 的非目标）：向量检索、后台自动整理、团队共享、云端同步、自动删除记忆。
 
@@ -137,7 +137,7 @@ reviewCount: number
   "format": "memstack.bundle",
   "version": 2,
   "exportedAt": "2026-11-03T02:00:00.000Z",
-  "app": { "name": "@local/memstack", "version": "0.2.0" },
+  "app": { "name": "@local/memstack", "version": "0.3.0" },
   "source": { "machine": "hostname", "platform": "win32", "dshHome": "C:/Users/me/.dsh" },
   "stats": { "banks": 3, "entries": 42, "links": 2 },
   "state": { "schemaVersion": 2, "banks": {}, "entries": {}, "links": {}, "meta": {} }
@@ -234,6 +234,6 @@ CLI 是 `console/cli.mjs`，与 UI 共用 `lib/portable.js`，不依赖网络。
 |---|---|
 | 衰减参数主观 | 全部集中在 `lib/decay.js` 的常量表 + `config.js` 覆盖，UI 显示当前参数 |
 | 3D 在小数据量下不好看 | 空态设计；≤5 节点时自动居中放大；提供 2D 模式 |
-| 导入把本地库改坏 | 默认 merge；replace 二次确认；导入前自动备份 `state.json.bak` |
+| 导入把本地库改坏 | 默认 merge；replace 二次确认；导入前自动备份 `memstack.db.<stamp>.bak` |
 | 新字段使旧版本打不开 | schemaVersion 2 + `Store.fromJSON` 幂等补默认值；README 注明降级方法 |
 | 测试再次被控制台子进程挂住 | 测试配置 `consoleEnabled: false`，并在 supervisor 里 `unref()` 子进程 |

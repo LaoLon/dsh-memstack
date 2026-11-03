@@ -5,11 +5,15 @@
  */
 
 import { basename } from 'node:path'
-import { stat } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { Store } from './lib/store.js'
 import { normalizeConfig } from './lib/config.js'
-import { loadState, resolveHomeDir, saveState, statePath } from './lib/persist.js'
+import {
+  commitStore,
+  getRevision,
+  loadStore,
+  openHomeDatabase,
+  resolveHomeDir,
+} from './lib/database.js'
 import { registerInjection } from './lib/inject.js'
 import { memoryTools } from './lib/tools.js'
 import { createConsoleSupervisor } from './lib/console.js'
@@ -38,45 +42,38 @@ const RULES = [
 
 export function apply(ctx, config) {
   const resolved = normalizeConfig(config)
-  const path = statePath(resolveHomeDir())
-  let store = new Store()
-  let loadedMtime = 0
+  const db = openHomeDatabase(resolveHomeDir(), { logger: ctx.logger })
+  let store = loadStore(db)
+  let loadedRevision = getRevision(db)
+  ctx.effect(() => () => {
+    try {
+      db.close()
+    } catch {
+      // Already closed by the runtime teardown.
+    }
+  })
 
-  const ready = loadState(path)
-    .then(async (raw) => {
-      if (raw) store = Store.fromJSON(raw)
-      try {
-        loadedMtime = (await stat(path)).mtimeMs
-      } catch {
-        // No file yet: the first commit creates it.
-      }
-      return true
-    })
-    .catch((error) => {
-      ctx.logger?.warn?.('memstack: failed to load state, starting empty: %o', error)
-      return true
-    })
+  const ready = Promise.resolve(true)
 
   const commit = async () => {
-    await saveState(path, store.toJSON())
     try {
-      loadedMtime = (await stat(path)).mtimeMs
-    } catch {
-      // The write succeeded; a missing stat only means the next refresh reloads.
+      loadedRevision = commitStore(db, store, { expectedRevision: loadedRevision })
+    } catch (error) {
+      if (String(error?.message ?? '').startsWith('state-conflict:')) {
+        // A console/CLI write won the race. Reload; the failed tool call can retry.
+        store = loadStore(db)
+        loadedRevision = getRevision(db)
+      }
+      throw error
     }
   }
 
   /** Picks up edits made outside the Host (e.g. the local console) before touching state. */
   const refresh = async () => {
-    try {
-      const info = await stat(path)
-      if (info.mtimeMs > loadedMtime) {
-        const raw = await loadState(path)
-        if (raw) store = Store.fromJSON(raw)
-        loadedMtime = info.mtimeMs
-      }
-    } catch {
-      // Missing file: keep the in-memory state.
+    const revision = getRevision(db)
+    if (revision !== loadedRevision) {
+      store = loadStore(db)
+      loadedRevision = revision
     }
   }
 

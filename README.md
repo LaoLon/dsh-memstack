@@ -24,7 +24,7 @@
 - **跨会话记忆**：Host 插件在会话首次请求注入索引；条目带来源会话，变更以可追溯的 `system-reminder` 追加。
 - **遗忘曲线**：Ebbinghaus 指数衰减 + 间隔重复。检索结果带留存率；确认“仍然成立”会重置曲线，标记“过时”则停用。
 - **关系图谱**：手写 Canvas 2D 的 3D 力导向图，不需要 three.js、CDN 或构建步骤；支持旋转、缩放、聚焦、筛选、2D/3D 切换。
-- **可迁移**：JSON bundle 含全部历史（含已取代条目）；控制台拖拽导入，或 CLI 导出/导入；导入前自动备份。
+- **可迁移**：JSON bundle 含全部历史（含已取代条目）；控制台拖拽导入，或 CLI 导出/导入；导入前自动备份当前 SQLite 库。
 
 ## 核心模型
 
@@ -70,7 +70,7 @@ R = 0.5 ^ (距上次确认的天数 / stabilityDays)
 
 ## 安装
 
-前提：DSH Desktop、仓库已放到本地目录。
+前提：DSH Desktop、仓库已放到本地目录。运行时使用 DSH 自带的 Node 24（内置 `node:sqlite`）；若用系统 Node 手动启动控制台，需要支持 `node:sqlite` 的版本。
 
 ```powershell
 # <dsh> 是 DSH 安装目录下的 CLI，例如 D:\DSHarness\resources\runtime\cli\bin\dsh.cmd
@@ -79,7 +79,7 @@ R = 0.5 ^ (距上次确认的天数 / stabilityDays)
 
 该命令会写入 profile 的 `dependencies` 与 `dsh.profile.bundles`，随后热重组生效，**无需重启**。
 
-数据存放在 `$DSH_HOME/memstack/state.json`（默认 `C:\Users\<你>\.dsh\memstack\state.json`），纯 JSON，可直接备份。
+数据存放在 `$DSH_HOME/memstack/memstack.db`（默认 `C:\Users\<你>\.dsh\memstack\memstack.db`），由 Node 内置的 `node:sqlite` 驱动，WAL 模式，没有额外 npm 依赖。旧版 `state.json` 会在首次启动时自动导入，并改名为 `state.json.migrated-<时间戳>.bak`；之后不再读取 JSON 作为真源。
 
 ## 工具
 
@@ -128,7 +128,7 @@ npm run console
 | **图谱** | 3D 力导向关系网；按库/类型/状态/边筛选；搜索高亮；点击查看详情 |
 | **记忆** | 按留存率浏览；搜索、库/状态/类型筛选、排序；固定、编辑、删除 |
 | **记忆库** | 库卡片（条目/生效/平均留存）；新建主题库、改名、停用；库关联矩阵 |
-| **数据** | 导出 JSON bundle / Markdown；拖拽导入；留存与类型分布；待复习队列 |
+| **数据** | 导出 JSON bundle / Markdown；拖拽导入；显示当前 SQLite 库路径；留存与类型分布；待复习队列 |
 
 条目抽屉包含：留存曲线、详情、否决理由、关系、替代链、元信息，以及“仍然成立 / 标记过时 / 编辑 / 删除 / 固定”等操作。
 
@@ -151,7 +151,9 @@ npm run demo
 
 ## 迁移与备份
 
-控制台「数据」页可以直接导出/导入；导入前会在同目录写 `state.json.<时间戳>.bak`。
+控制台「数据」页可以直接导出/导入；导入前会用 SQLite 在线备份 API 在同目录写 `memstack.db.<时间戳>.bak`。日常备份推荐导出 bundle；如果直接复制数据库文件，请先退出 Host 与控制台，或连同 `-wal`/`-shm` 一起复制。
+
+旧版 JSON 数据不需要手动转换：升级前先停掉旧版 Host 与控制台（旧进程仍会写 `state.json`），再启动新版；若发现 `$DSH_HOME/memstack/state.json` 且数据库尚不存在，会先完整导入 SQLite，再把 JSON 改名为 `.migrated-*.bak`。迁移失败时不会留下空数据库，原 JSON 保持不动，便于排查后重试。
 
 CLI：
 
@@ -200,15 +202,15 @@ npm run import -- memstack.bundle.json --mode replace
 2. 消息来源保存条目快照，下一轮按 `(bank, topic)` 比对，只注入差异；
 3. 取代写作被渲染成“更新 + 已失效”，而不是“新增 + 删除”；
 4. 注入只追加、不重写历史，KV cache 友好；
-5. 状态真源是一个 JSON 文件；插件与控制台通过 mtime 感知外部修改。
+5. 状态真源是 `$DSH_HOME/memstack/memstack.db`；插件与控制台通过 SQLite `revision` 感知外部提交，写入走 `BEGIN IMMEDIATE`，不会用静默覆盖解决并发。
 
 ## 目录结构
 
 ```
 index.js            Host 插件入口（apply）
-lib/                纯核心：store / decay / render / graph / portable / query / tools / inject / persist / console
+lib/                纯核心：store / database / decay / render / graph / portable / query / tools / inject / console
 console/            本地控制台（server.mjs + app.js + graph3d.js + styles.css）
-test/               单元与集成测试（含真实 HTTP 控制台）
+test/               单元与集成测试（含真实 HTTP 控制台与 SQLite 迁移/并发）
 docs/               设计、开发、路线图与截图
 cordis.patch.yml    bundle 插入行
 ```
@@ -218,9 +220,9 @@ cordis.patch.yml    bundle 插入行
 零运行时依赖、无构建步骤；控制台在离线环境也能打开。
 
 ```powershell
-npm test          # node --test，83 项
+npm test          # node --test，91 项
 npm run console   # 单独启动控制台
-npm run demo      # 隔离演示数据
+npm run demo      # 隔离演示数据（重新播种 SQLite）
 ```
 
 Host 代码改动后，改一行 profile 的 `cordis.patch.yml` 可触发 HMR 重组；控制台改完刷新页面即可。测试固定时钟，避免真实时间让留存率漂移。
@@ -231,9 +233,9 @@ Host 代码改动后，改一行 profile 的 `cordis.patch.yml` 可触发 HMR �
 
 ## 状态
 
-v2 已完成：取代链与可追溯注入、遗忘曲线与复习、3D 图谱、条目/库/数据控制台、JSON bundle 与 Markdown 导出、merge/replace 导入、浅色主题、中英文界面、真实 HTTP 集成测试。
+v3 已完成：SQLite 持久化（`node:sqlite`，WAL + revision 冲突检测 + 增量写入）、旧 `state.json` 自动迁移、在线备份；v2 的取代链与可追溯注入、遗忘曲线与复习、3D 图谱、条目/库/数据控制台、JSON bundle 与 Markdown 导出、merge/replace 导入、浅色主题、中英文界面、真实 HTTP 集成测试继续保留。
 
-未做（有意留到需要时）：embedding 语义检索、多人协同、DSH 设置页内的原生页面、自动整理器（合并近似条目 / TTL）。
+未做（有意留到需要时）：embedding 语义检索、多人协同、DSH 设置页内的原生页面、自动整理器（合并近似条目 / TTL）、FTS5 中文分词。
 
 ## License
 

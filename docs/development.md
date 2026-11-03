@@ -72,17 +72,17 @@ DSH 自己所有"页面读 Host 数据"的通道都是 Typert：业务 Service �
 | 段 | 内容 | 前置 |
 |---|---|---|
 | **S3a** | 对话内管理：`memory_forget`（停用/删除，删除自动恢复前驱）、`memory_inventory`（全状态、按库分组） | 无，已完成并测试 |
-| **S3b** | 可视化界面：**改为独立本地控制台** `console/`，直接读写 `state.json`；插件激活时自动拉起（`lib/console.js`） | 无，已完成 |
+| **S3b** | 可视化界面：**改为独立本地控制台** `console/`，直接读写 SQLite 库；插件激活时自动拉起（`lib/console.js`） | 无，已完成 |
 | **S4** | 库与关联：控制台支持建库/改名/描述/私密/停用/删除，以及按源库配置 recall、query 勾选 | 无，已完成 |
 
-**为什么不做进 DSH 页面**：把管理页放进 DSH 才需要 Typert 生成；但记忆数据就是一个 JSON 文件，本地控制台（`node console/server.mjs`，监听 127.0.0.1）能读也能改，功能不缩水，还省掉构建链。代价是要多开一个窗口，且需要处理两侧同时写的冲突——插件侧已按文件 mtime 重载（外部改动在下一个工具调用时生效）。
+**为什么不做进 DSH 页面**：把管理页放进 DSH 才需要 Typert 生成；但记忆数据是本地 SQLite 库，本地控制台（`node console/server.mjs`，监听 127.0.0.1）能读也能改，功能不缩水，还省掉构建链。代价是要多开一个窗口，且需要处理两侧同时写的冲突——v3 起用 SQLite `revision` + `BEGIN IMMEDIATE` 检测（外部改动在下一个工具调用时生效），不再依赖文件 mtime。
 
 ### 备选方案（若 SP-1 不成立）
 
 不引入 DSH 包，改为**零依赖**实现：
 
 - 工具：手写定义对象；若注册器要求 `defineTool` 产物，再退回引入包；
-- 存储：自管 JSON 文件（`$DSH_HOME/memstack/state.json`），原子写（临时文件 + rename），自带 `schemaVersion`；
+- 存储：自管 SQLite 文件（`$DSH_HOME/memstack/memstack.db`），`node:sqlite`，WAL + revision，自带 `schemaVersion`（v1–v2 曾是 JSON 原子写，v3 已替换）；
 - 领域事件：自己发，不依赖 `domain/changed`。
 
 代价是放弃 DSH 的 schema 校验与写链；收益是与 DSH 版本解耦、可完全离线单测。**v1 若 SP-1 走不通，就走这条路。**
@@ -101,9 +101,9 @@ E:\Code\MemStack\
 ├── index.js                  Host 入口：apply(ctx, config)
 ├── lib/
 │   ├── config.js             默认配置与归一化
-│   ├── store.js              纯核心：Bank/Entry 状态机与不变量
+│   ├── store.js              纯核心：Bank/Entry 状态机、不变量与 dirty 追踪
+│   ├── database.js           SQLite 适配：schema、增量提交、revision、迁移、备份
 │   ├── render.js             纯函数：索引与通知文本、预算、转义
-│   ├── persist.js            持久化适配（JSON 原子写）
 │   ├── inject.js             pre-step 监听与注入
 │   ├── tools.js              工具注册
 │   └── export.js             Markdown 导出
@@ -135,7 +135,7 @@ E:\Code\MemStack\
 |---|---|---|---|
 | **S0** | 环境与接口勘察 | 本文 §2、§3 结论 | spike 三问有答案 |
 | **S1** | 纯核心 | `store.js`、`render.js`、`config.js` + 单测 | `node --test` 全绿；覆盖 6 条不变量 |
-| **S2** | 最小闭环（M1） | `index.js`、`persist.js`、`tools.js`、`inject.js` | 新会话能读到旧决策，且不再建议被否方案 |
+| **S2** | 最小闭环（M1） | `index.js`、存储层（v3 为 `database.js`）、`tools.js`、`inject.js` | 新会话能读到旧决策，且不再建议被否方案 |
 | **S3** | 可见与可管（M2/M3） | 设置页、对话行、`/remember` | 能查、能改、能删；写入可见可撤销 |
 | **S4** | 关联与候选（M4） | 关联矩阵、可发现性、`/wrap`、Inbox | 未注入的库能搜到；候选不注入 |
 | **S5** | 治理（M5） | 整理器、导出、迁移脚本 | 长期使用条目数不失控 |
@@ -202,7 +202,7 @@ escapeMemoryText(text)
 步骤：
 
 1. **spike**（SP-1/2/3），把结论写回 §3；
-2. `persist.js`：JSON 原子写与加载（先落盘再返回，失败抛错不吞）；
+2. `database.js`：SQLite schema、加载/增量提交与旧 JSON 迁移（v1–v2 曾是 `persist.js` 的 JSON 原子写，v3 已删除该模块）；
 3. `index.js`：`apply(ctx, config)` 里按顺序初始化 store → 注册工具 → 注册注入监听；
 4. `tools.js`：`memory_write` / `memory_search`（`memory_read` 可延后）；
 5. `inject.js`：首轮组索引、变更追加通知；
@@ -218,7 +218,7 @@ escapeMemoryText(text)
 
 **S2 完成记录（2026-10-21，代码完成，未安装）**
 
-- 产出：`lib/persist.js`（原子写 + 单写链）、`lib/sync.js`（快照/差分/驳回通知）、`lib/query.js`（检索与读取）、`lib/tools.js`（三个工具）、`lib/inject.js`（pre-step 注入）、`index.js`（装配）。
+- 产出：`lib/database.js`（SQLite 增量提交 + 单写事务；v1–v2 为 `persist.js` 原子写 + 单写链）、`lib/sync.js`（快照/差分/驳回通知）、`lib/query.js`（检索与读取）、`lib/tools.js`（三个工具）、`lib/inject.js`（pre-step 注入）、`index.js`（装配）。
 - 单测：29 项全绿，其中 `test/plugin.spec.js` 用假 ctx 跑通了完整注入链路（空库不注入 → 首次注入索引 → 无变化不重复 → 推翻结论注入驳回 → 删除注入废止）。
 - **两个真问题**：
   1. 差分最初以条目 id 为键，导致"取代"被渲染成"新增 + 废止"，驳回记录丢失。改为 `(bankId, topic)` 为键（已写进 design.md §8.4）。
@@ -228,7 +228,7 @@ escapeMemoryText(text)
 
 - 命令：`dsh plugin --profile desktop add "link:E:\Code\MemStack"`，550ms 完成。
 - **CLI 的行为比文档写的多**：它不只在 `dependencies` 写 `link:`，还自动把 `@local/memstack` 追加进 `dsh.profile.bundles`，随后桌面端热重组，**无需重启**。文档 §8 已按实测修正。
-- 现场证据：三个工具当场出现在工具集；本轮上下文里出现 `<system-reminder>` 索引；`$DSH_HOME/memstack/state.json` 落盘；`workspaceRegistry.resolveByPath` 解析出真实工作区 id，库标题自动取为 `MemStack`。
+- 现场证据：三个工具当场出现在工具集；本轮上下文里出现 `<system-reminder>` 索引；`$DSH_HOME/memstack/state.json` 落盘（v3 起为 `memstack.db`）；`workspaceRegistry.resolveByPath` 解析出真实工作区 id，库标题自动取为 `MemStack`。
 - 显示注意：PowerShell 直接 `Get-Content` 该 JSON 会显示乱码，那是控制台按 GBK 解码 UTF-8 的显示问题；用 Node 以 `utf8` 读回校验正常。
 - **M1 首轮验收的方法错误**：验收脚本引用的是 design.md 附录 B 的示例数据，而那条 SPDK 结论从未真正写入库，于是新会话只看到两条插件自身的记忆，检索当然为空。结论：**链路验证 ≠ 行为验证**；今后每次验收先写入真实条目，再开新会话观察，不能拿文档示例当数据。
 
@@ -277,7 +277,7 @@ escapeMemoryText(text)
 | 看合成后的 profile | `dsh --profile desktop --dump-config` |
 | 看插件是否加载 | GUI 插件页状态；启动日志里找 `memstack` |
 | 看注入内容 | 会话里检查用户消息是否含 `<system-reminder>`；或临时在 `inject.js` 打印 decision |
-| 看持久化数据 | `$DSH_HOME/memstack/state.json`（直接开） |
+| 看持久化数据 | `$DSH_HOME/memstack/memstack.db`；用 `node --input-type=module -e "..."` 或任意 SQLite 客户端查表（注意 WAL） |
 | 复现逻辑缺陷 | 先写 `test/*.test.js`，再改代码 |
 
 日志不要 `console.log` 到用户可见输出；用 `ctx.logger` 或临时文件。
@@ -289,9 +289,9 @@ escapeMemoryText(text)
 1. ESM，`type: "module"`，不用 TS 构建（Client 是手写 bundle，Host 是纯 JS）。
 2. `lib/store.js`、`lib/render.js` 零依赖；时间与 id 通过构造参数注入，便于测试。
 3. 所有写操作经过 store 方法，不直接改 state 对象。
-4. 状态是纯 JSON（无函数、无 Date 对象），可直接 `JSON.stringify`。
+4. 内存中的 state 保持纯 JSON（无函数、无 Date 对象），便于 bundle 导出与测试；落盘由 SQLite 负责，不再全量 `JSON.stringify`。
 5. 用户可见文案走 locale 文件（S3 起）；Host 内部错误信息用英文常量，方便检索。
-6. 不吞错误：持久化失败要抛，让上层决定是否降级。
+6. 不吞错误：持久化/提交冲突要抛，让上层决定是否重试或降级。
 
 ---
 
@@ -325,7 +325,7 @@ v2 不再按“先 spike 再写”推进，而是每个模块先落纯函数与�
 
 ```powershell
 $node = 'C:\Users\<you>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
-& $node --test        # 83 项，当前全绿
+& $node --test        # 91 项，当前全绿
 ```
 
 - 纯逻辑测试全部显式传 `now`，不要依赖 `new Date()`；
@@ -350,4 +350,120 @@ $node = 'C:\Users\<you>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\
 - 控制台不引 three.js / d3 / 打包器：3D 投影、力导向、sprite、标签避让都在 `console/graph3d.js`；
 - bundle 不依赖 DSH 内部包：只用 Node 标准库与 `index.js` 的 Host 契约；
 - 不把 `node_modules` 或构建产物提交进仓库；`npm test` 在裸 Node 下可跑。
+
+---
+
+## 13. v3：SQLite 持久化
+
+### 13.1 改动范围
+
+| 文件 | 变化 |
+|---|---|
+| `lib/database.js` | 新增。`node:sqlite` schema、`loadStore`/`commitStore`、`StoreDatabase`、迁移、备份 |
+| `lib/store.js` | 新增 `dirty` 集合与 `mark*`/`clearDirty`；每个领域操作标记被改动的实体 |
+| `index.js` | 启动时打开数据库；`refresh()` 比较 `revision`；`commit()` 带 `expectedRevision` 提交 |
+| `console/server.mjs` | 长连接 `StoreDatabase`；请求读缓存快照；写操作放进事务；导入前在线备份 |
+| `console/cli.mjs` | export/import 直接读写数据库；import 前备份 `.db.<stamp>.bak` |
+| `console/demo.mjs` | 每次演示前重建 SQLite 并直接播种，不再写 `state.json` |
+| `lib/persist.js` | 删除；JSON 只作为 bundle / 迁移格式存在 |
+| `test/database.spec.js` | 新增往返、增量、级联删除、revision 冲突、迁移、损坏 JSON、备份、缓存事务测试 |
+
+### 13.2 提交路径
+
+```text
+工具/控制台 handler
+  └─ Store 方法（改 state，标记 dirty，记录 changes）
+      └─ commitStore(db, store, { expectedRevision })
+          ├─ BEGIN IMMEDIATE
+          ├─ SELECT revision，与 expectedRevision 比对（不一致 rollback + state-conflict）
+          ├─ upsert dirty rows / delete missing rows
+          ├─ revision + 1
+          └─ COMMIT（成功后 clearDirty）
+```
+
+控制台的 `StoreDatabase.mutate()` 把 handler 放进同一个事务；Host 仍是“工具执行完再提交”，所以极端并发下可能收到冲突，下一次工具调用会在 `prepare()` 里重新加载后重试。
+
+### 13.3 迁移与回滚
+
+- 首次启动迁移：解析旧 JSON → `Store.fromJSON()` → 全量写库 → 旧文件改名 `.migrated-*.bak`。
+- 解析/写入失败：关闭并删除刚创建的空库文件，旧 JSON 不动；错误前缀 `legacy-migration-failed:`。
+- 需要回滚到 v2：停掉 Host/控制台，删除 `memstack.db`（及 `-wal`/`-shm`），把 `state.json.migrated-*.bak` 改回 `state.json`，再安装 v2 代码。注意：v2 代码不认识 v3 期间新增的数据。
+
+### 13.4 调试
+
+```powershell
+$node = 'C:\Users\<you>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
+& $node --input-type=module -e "import {DatabaseSync} from 'node:sqlite'; const db=new DatabaseSync(process.env.DSH_HOME + '/memstack/memstack.db'); console.log(db.prepare('select key,value from meta').all()); console.log(db.prepare('select status,count(*) n from entries group by status').all()); db.close()"
+```
+
+- 不要用 PowerShell 的 `Get-Content`/`ConvertFrom-Json` 检查中文内容，控制台代码页会误伤；用 Node 以 `utf8` 读取。
+- WAL 模式下主文件可能落后于 `-wal`；排查时连同 `-wal` 一起看，或直接查数据库连接。
+- `node:sqlite` 是同步 API，不要在事务里 `await`；控制台 handler 保持同步。
+
+### 13.5 测试注意
+
+- 每个数据库测试用独立临时 home，结束时先 `db.close()` 再 `rm`；Windows 上打开的文件不能删。
+- 并发测试开两个 `DatabaseSync` 连接，模拟 Host + 控制台；断言失败提交不会写入。
+- 服务端集成测试要等子进程退出后再清理临时目录。
+
+---
+
+## 14. 安全约定：破坏性操作
+
+### 14.1 2026-11-03 事故
+
+一次"验证 v3 迁移 + 清理测试 home"的一次性长命令，以
+`Remove-Item -LiteralPath $home -Recurse -Force` 结尾。`$home` 是 PowerShell
+的**只读自动变量**，恒等于 `%USERPROFILE%`（`C:\Users\admin`），对它赋值只会
+报错并被忽略。结果整个用户目录被递归删除：
+
+| 被删 | 后果 |
+|---|---|
+| `~/.dsh`（profile、sessions、memstack 数据） | DSH 自身状态与会话上下文 |
+| `~/.config/opencode`、`~/.local/share/opencode` | opencode 的 API 配置与会话库 |
+| `AppData/Local/Programs/DeepSeek Harness`、`.../ai.opencode.desktop` | 两个应用的安装目录 |
+
+只有被进程占用的文件幸免（输出里满屏"正由另一进程使用"），`D:\dsh-memstack`
+因为不在 `C:\Users\admin` 下而完好——**事故与插件放置的目录无关**。
+
+**证据**（唯一存活的现场）：`%TEMP%\dsh-spill-1ZYusS\session-5e45483e4446\*-pwsh.txt`，
+726 行里 700+ 行是 `无法删除项 C:\Users\admin\...`，命令行片段为
+`+ ... | Format-List; Remove-Item -LiteralPath $home -Recurse -Force; Remove ...`，
+位置"行:1 字符: 1103"。
+
+**早于删除一分钟的信号**：`C:\Users\admin\memstack\state.json`（11:35:24）其实是
+一个 memstack SQLite 库——说明那个"测试 home"在删除前已经指向真实用户目录，
+没有人核对解析结果。
+
+### 14.2 护栏
+
+| 文件 | 作用 |
+|---|---|
+| `scripts/guard.mjs` | 删除前断言：目标必须 realpath 后位于临时根内、不等于临时根、不是受保护目录（用户目录、`~/.dsh`、`~/.config`、`~/.local`、`APPDATA`、`LOCALAPPDATA`）或仓库的祖先；临时根自身被污染（`TMP` 指向用户目录）时整体拒绝 |
+| `scripts/home.mjs` | 唯一入口：`new` / `check` / `reset` / `backup` |
+| `test/guard.spec.js` | 11 项回归测试，其中"拒绝删除用户目录"直接锁定本次事故形态 |
+
+```powershell
+$node = 'C:\Users\admin\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
+
+$testHome = & $node scripts/home.mjs new      # 只打印路径
+& $node scripts/home.mjs check $testHome      # 打印解析后的真实路径，不删任何东西
+& $node scripts/home.mjs reset $testHome      # 断言通过才递归删除
+& $node scripts/home.mjs backup               # 备份到 D:\dsh-backups\<stamp>（异卷）
+```
+
+- `reset` 没有默认目标：空路径直接拒绝，`$env:TEMP` 之外的路径一律拒绝。
+- `check` 可用于任何路径：对 `C:\Users\admin` 会返回 `[protected]`，`exit 1`。
+- junction/symlink 按 realpath 判定，不会因为名字像临时目录就放行。
+- `backup` 只复制、从不删除；默认源是 `$DSH_HOME` 与 `~/.config/opencode`。
+  `--with-opencode-data` 才会带上 `opencode.db`（WAL 库，运行中复制可能不一致）。
+
+### 14.3 操作纪律
+
+1. 不用 `$home`、`$HOME`、`$profile`、`$env`、`$input` 作变量名；临时目录叫 `$testHome`。
+2. 一条命令只做一件事。禁止把"导出 + 检查 + 删除"串成一条 1000+ 字符的命令——审批框里看不出变量真实取值。
+3. 删除前必须 `check`，并在输出里确认解析后的绝对路径。
+4. 改 profile、`~/.dsh`、`AppData` 前先 `backup`；备份放异卷，避免与源一起被删。
+5. `DSH_HOME` 必须是专用目录，禁止设成 `%USERPROFILE%` 本身；否则 `~/memstack/` 会污染用户目录根部，任一"清理 home"的脚本都可能把整棵 profile 当目标。
+6. 需要清理时只清理 `$env:TEMP` 下自己的子目录，不碰用户目录里的任何东西。
 

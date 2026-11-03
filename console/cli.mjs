@@ -1,11 +1,22 @@
 #!/usr/bin/env node
 /** MemStack CLI: machine-to-machine export/import that shares lib/portable.js with the console. */
 
-import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { existsSync, readFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { dirname, resolve } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { Store } from '../lib/store.js'
-import { loadState, resolveHomeDir, saveState, statePath } from '../lib/persist.js'
+import {
+  backupDatabase,
+  commitStore,
+  databasePath,
+  getRevision,
+  legacyStatePath,
+  loadStore,
+  openHomeDatabase,
+  resolveHomeDir,
+} from '../lib/database.js'
 import {
   buildBundle,
   importState,
@@ -13,6 +24,7 @@ import {
   renderMarkdown,
   serializeBundle,
 } from '../lib/portable.js'
+import { APP_VERSION } from '../lib/version.js'
 
 function parseArgs(argv) {
   const flags = { banks: [] }
@@ -48,8 +60,28 @@ function usage() {
 }
 
 async function readStore(homeDir) {
-  const raw = await loadState(statePath(homeDir))
-  return raw ? Store.fromJSON(raw) : new Store()
+  const db = openHomeDatabase(homeDir)
+  try {
+    return loadStore(db)
+  } finally {
+    db.close()
+  }
+}
+
+/** Dry-run must not create/migrate anything: read the current DB or legacy JSON as-is. */
+function readImportStore(homeDir) {
+  const file = databasePath(homeDir)
+  if (existsSync(file)) {
+    const db = new DatabaseSync(file, { readOnly: true })
+    try {
+      return loadStore(db)
+    } finally {
+      db.close()
+    }
+  }
+  const legacy = legacyStatePath(homeDir)
+  if (existsSync(legacy)) return Store.fromJSON(JSON.parse(readFileSync(legacy, 'utf8')))
+  return new Store()
 }
 
 async function exportCommand(flags) {
@@ -87,7 +119,7 @@ async function exportCommand(flags) {
     }
   }
   const bundle = buildBundle(state, {
-    appVersion: '0.2.0',
+    appVersion: APP_VERSION,
     machine: hostname(),
     platform: process.platform,
     dshHome: homeDir,
@@ -103,30 +135,30 @@ async function importCommand(flags, positional) {
   if (!file) throw new Error('缺少要导入的 bundle 文件')
   const mode = flags.mode === 'replace' ? 'replace' : 'merge'
   const homeDir = flags.home ? resolve(flags.home) : resolveHomeDir()
-  const path = statePath(homeDir)
   const bundle = parseBundle(await readFile(resolve(file), 'utf8'))
-  const raw = await loadState(path)
-  const store = raw ? Store.fromJSON(raw) : new Store()
-  const report = importState(store, bundle, { mode })
 
   if (flags.dryRun) {
+    const report = importState(readImportStore(homeDir), bundle, { mode })
     console.log(JSON.stringify(report, null, 2))
     console.log('dry-run：未写入任何数据')
     return
   }
 
+  const db = openHomeDatabase(homeDir)
   try {
-    await stat(path)
-    const backup = `${path}.${new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '')}.bak`
-    await copyFile(path, backup)
-    console.log(`已备份原数据：${backup}`)
-  } catch {
-    // No existing state: nothing to back up.
-  }
+    const store = loadStore(db)
+    const report = importState(store, bundle, { mode })
 
-  await saveState(path, store.toJSON())
-  console.log(`已导入（${mode}）：+${report.entriesAdded} 条，跳过 ${report.entriesSkipped} 条，冲突 ${report.conflicts.length} 个`)
-  console.log(JSON.stringify(report, null, 2))
+    const backup = `${databasePath(homeDir)}.${new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '')}.bak`
+    await backupDatabase(db, backup)
+    console.log(`已备份原数据：${backup}`)
+    commitStore(db, store, { expectedRevision: getRevision(db) })
+
+    console.log(`已导入（${mode}）：+${report.entriesAdded} 条，跳过 ${report.entriesSkipped} 条，冲突 ${report.conflicts.length} 个`)
+    console.log(JSON.stringify(report, null, 2))
+  } finally {
+    db.close()
+  }
 }
 
 async function main() {

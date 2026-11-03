@@ -409,7 +409,7 @@ Agent 在满足四类事件且"仓库里查不到"时调用 `memory_write`；用
 
 ## 11. UI 设计
 
-> 实施变更（v1）：管理界面不再做进 DSH 设置页，改为**独立的本地控制台**（`console/`，`node console/server.mjs`，监听 `127.0.0.1:7788`）。原因：DSH 页面的 Host↔Client 数据通道依赖 Typert 代码生成（需要源码 checkout），而记忆本身就是一个 JSON 文件，独立控制台能读能改、功能不缩水、零构建。下面的页面信息架构仍然适用，只是宿主从设置页换成了控制台。
+> 实施变更（v1）：管理界面不再做进 DSH 设置页，改为**独立的本地控制台**（`console/`，`node console/server.mjs`，监听 `127.0.0.1:7788`）。原因：DSH 页面的 Host↔Client 数据通道依赖 Typert 代码生成（需要源码 checkout），而记忆本身是本地数据库（v1–v2 为 JSON，v3 起为 SQLite），独立控制台能读能改、功能不缩水、零构建。下面的页面信息架构仍然适用，只是宿主从设置页换成了控制台。
 >
 > 控制台由插件在激活时自动拉起（`lib/console.js`）：先探测端口，已监听则复用，否则以 `ELECTRON_RUN_AS_NODE` 启动子进程并轮询就绪；插件卸载时关闭它。开关与端口分别是 `consoleEnabled` 和 `consolePort`。
 
@@ -502,6 +502,8 @@ Agent 在满足四类事件且"仓库里查不到"时调用 `memory_write`；用
 ---
 
 ## 13. 存储与数据生命周期
+
+> **实施变更（v3）**：本节描述的 `dsh-storage-json` domain 表是 v1 的早期方案，实际实现已改为 `$DSH_HOME/memstack/memstack.db` 的 SQLite 真源，见 [§23](#23-sqlite-持久化v3)。下面的删除语义、项目内导出仍适用。
 
 ### 13.1 domain 表
 
@@ -739,7 +741,7 @@ v1 解决了“结论会过时、旧结论必须可追溯”，但记忆仍是�
 - `format: memstack.bundle`，`version: 2`，`state` 内嵌完整历史（不是投影）；
 - 解析接受旧版裸 `state.json`（`legacy: true`），统一走 `Store.fromJSON()` 迁移；
 - 冲突策略见 README：`duplicate-id` 跳过、id 冲突重映射、`topic-taken` 导入项归档、`replace` 显式确认；
-- 导入前在同目录写 `state.json.<stamp>.bak`，导入报告包含计数、冲突、备份路径；
+- 导入前用 SQLite 在线备份写 `memstack.db.<stamp>.bak`，导入报告包含计数、冲突、备份路径；
 - Markdown 投影用于 git / 人读，不用于回导，避免有损往返。
 
 ### 22.5 控制台 UI
@@ -748,7 +750,7 @@ v1 解决了“结论会过时、旧结论必须可追溯”，但记忆仍是�
 - 图谱筛选（库/类型/状态/边）、搜索高亮、选中聚焦、抽屉打开时投影中心左移、自动旋转在选中时暂停；
 - 抽屉：留存曲线、详情、驳回理由、关系、替代链、元信息与操作；
 - 数据页：导出/导入、留存与类型分布、待复习队列；浅色主题与中英文切换；
-- 控制台只绑定 `127.0.0.1`，静态资源白名单，写操作串行化，原子写（temp + rename）。
+- 控制台只绑定 `127.0.0.1`，静态资源白名单，写操作串行化，数据库事务提交（不再使用 temp + rename 的 JSON 原子写）。
 
 ### 22.6 v2 决策补充
 
@@ -761,3 +763,57 @@ v1 解决了“结论会过时、旧结论必须可追溯”，但记忆仍是�
 | 11 | 导入默认 | `merge`，冲突时保留本地 active | 迁移不能静默覆盖用户当前结论 | 中 |
 | 12 | 迁移格式 | 带版本 JSON bundle，内嵌完整 state | 可校验、可报告、可回滚；Markdown 只做投影 | 低 |
 | 13 | 主题 | 深色优先，浅色显式切换 | 图谱在深色背景下对比度最好；浅色用于分享/打印 | 低 |
+
+---
+
+## 23. SQLite 持久化（v3）
+
+### 23.1 为什么换真源
+
+v2 的 `state.json` 每次提交都要 `JSON.stringify` 全量 state、写临时文件、rename；20k 条时单次提交约 146ms，且控制台每个请求都要重新解析整个文件。图谱与检索也会在每次投影时复制/遍历全部条目。数据量上来后，全量重写成为主要延迟来源。
+
+v3 把**本地真源**换成 `$DSH_HOME/memstack/memstack.db`，仍然零 npm 依赖：使用 DSH 自带 Node 24 的 `node:sqlite`（Electron 运行时同样可用）。JSON 保留为**交换格式**（bundle / Markdown / 旧数据迁移），不再参与日常读写。
+
+### 23.2 表结构
+
+```sql
+meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+banks(id TEXT PRIMARY KEY, kind, title, archived_at, updated_at, payload);
+entries(id TEXT PRIMARY KEY, bank_id, topic, kind, status, confidence,
+        pinned, created_at, updated_at, payload);
+links(key TEXT PRIMARY KEY, from_bank_id, to_bank_id, payload);
+```
+
+- `payload` 保存完整领域对象（JSON），索引列是查询投影；读取后交给 `Store.fromJSON()` 做一次迁移/规范化。
+- `meta` 保存 `db_schema`、`store_schema`、`revision`、`store_meta`（默认库映射等）。
+- 索引：`entries(bank_id,status)`、`entries(topic)`、`entries(status)`、`entries(updated_at)`、`links(from_bank_id)`、`links(to_bank_id)`。
+- `PRAGMA journal_mode=WAL`、`synchronous=NORMAL`、`busy_timeout=5000`。
+
+### 23.3 增量写入与并发
+
+`Store` 在每次领域变更时标记脏的 bank/entry/link 或 `meta`；`commitStore()` 在一个 `BEGIN IMMEDIATE` 事务里只 upsert 脏行、删除已消失的行，并递增 `meta.revision`。完整重写只发生在导入、迁移和 `dirty.all` 场景。
+
+- Host 与独立控制台是**两个进程、两个连接**；两边每次操作前比较 `revision`，发现变化就重新加载 `Store`。
+- 提交时传入加载时的 `expectedRevision`；不匹配则回滚并抛 `state-conflict:<expected>-><current>`，绝不静默覆盖对方。
+- 控制台的写请求在进程内串行化；`StoreDatabase.mutate()` 把“读最新快照 → 修改 → 提交”放在同一个事务里。
+- `node:sqlite` 是同步 API：单次查询在毫秒级，适合本机单用户；事务内不做 `await`，避免阻塞事件循环过久。
+
+### 23.4 迁移
+
+1. 首次打开时若数据库不存在、而 `memstack/state.json` 存在：先解析并 `Store.fromJSON()`（校验失败则直接抛错，不创建数据库），再全量写入，最后把旧文件改名为 `state.json.migrated-<stamp>.bak`。
+2. 若导入中途失败：关闭并删除刚创建的空数据库文件（含 `-wal`/`-shm`），旧 JSON 原样保留，下次可重试。
+3. 数据库已存在时永远不再读 `state.json`，避免两份真源互相覆盖。
+4. bundle 导入的 `legacy` 裸 JSON 解析路径不变，只影响交换格式。
+
+### 23.5 备份与恢复
+
+- 导入前调用 `backup(db, path)`（SQLite 在线备份 API，异步 Promise），生成同目录 `memstack.db.<stamp>.bak`；备份是完整可读数据库。
+- 日常跨机迁移仍推荐 JSON bundle（`npm run export` / `npm run import`），它带完整历史且与存储引擎解耦。
+- 手工复制 `.db` 时应先退出 Host 与控制台，或连同 `-wal`/`-shm` 一并复制；不要在运行中只拷主文件。
+
+### 23.6 已知限制
+
+- `node:sqlite` 在 Node 24 仍是 experimental/RC API；Node 26 会把 `DatabaseSync` 改名为 `Database`。适配层集中在 `lib/database.js`，升级时只需改这一处。
+- SQLite 版本随 Node 绑定，不受本仓库控制；需要特定扩展时不能假设系统 SQLite。
+- 中文检索仍是 JS 子串匹配；FTS5 已可用，但中文分词需要额外方案，暂不引入。
+- 图谱投影仍可能产生大量派生边；服务端上限是下一步优化，不应只靠 SQLite 解决。

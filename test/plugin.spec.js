@@ -26,10 +26,13 @@ function fakeSession() {
 }
 
 function fakeContext(services, registrations) {
+  const disposers = []
   return {
-    logger: { warn() {} },
+    logger: { warn() {}, info() {} },
     effect(fn) {
-      return fn()
+      const dispose = fn()
+      if (typeof dispose === 'function') disposers.push(dispose)
+      return dispose
     },
     get(name) {
       return services[name]
@@ -43,6 +46,9 @@ function fakeContext(services, registrations) {
         registrations.tools.push(tool)
         return () => {}
       },
+    },
+    disposeAll() {
+      while (disposers.length) disposers.pop()()
     },
   }
 }
@@ -78,6 +84,7 @@ async function bootstrap() {
       return tool.execute(args, { agent: { session }, signal: undefined })
     },
     async cleanup() {
+      ctx.disposeAll()
       if (previous === undefined) delete process.env.DSH_HOME
       else process.env.DSH_HOME = previous
       await rm(home, { recursive: true, force: true })
@@ -168,20 +175,23 @@ test('结论被推翻时注入驳回通知，而不是新索引', async () => {
   }
 })
 
-test('外部修改 state.json 后，下一次工具调用会重新加载', async () => {
+test('外部修改 SQLite 后，下一次工具调用会重新加载', async () => {
   const { registrations, write, cleanup } = await bootstrap()
   try {
     await write({ topic: 'ext.one', claim: '会被外部归档的结论' })
     const search = registrations.tools.find((tool) => tool.name === 'memory_search')
     assert.equal((await search.execute({ query: 'ext' }, {})).length, 1)
 
-    // Simulate the local console editing the file behind the Host's back.
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    const file = join(process.env.DSH_HOME, 'memstack', 'state.json')
-    const { readFile, writeFile } = await import('node:fs/promises')
-    const raw = JSON.parse(await readFile(file, 'utf8'))
-    for (const entry of Object.values(raw.entries)) entry.status = 'archived'
-    await writeFile(file, JSON.stringify(raw), 'utf8')
+    // Simulate the local console editing the database behind the Host's back.
+    const { openHomeDatabase, loadStore, commitStore, getRevision } = await import('../lib/database.js')
+    const db = openHomeDatabase(process.env.DSH_HOME)
+    try {
+      const store = loadStore(db)
+      for (const entry of Object.values(store.state.entries)) store.archiveEntry(entry.id)
+      commitStore(db, store, { expectedRevision: getRevision(db) })
+    } finally {
+      db.close()
+    }
 
     assert.equal((await search.execute({ query: 'ext' }, {})).length, 0, 'archived entry must disappear')
   } finally {
