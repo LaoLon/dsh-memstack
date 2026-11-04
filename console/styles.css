@@ -282,6 +282,16 @@ select {
   color: var(--text); font-size: 12.5px; outline: 0;
 }
 select:focus { border-color: rgba(125, 211, 252, 0.55); }
+/* 展开的下拉层由浏览器绘制，个别 Windows 主题下不跟随页面的 color-scheme，
+   会退回浅色系统菜单底；而选项文字仍继承 select 的浅色 → 浅字浅底看不清。
+   这里显式给条目定色，深/浅主题靠变量自动翻转。 */
+select option,
+select optgroup {
+  background-color: var(--panel-solid);
+  color: var(--text);
+  font-size: 12.5px;
+}
+select option:checked { color: var(--accent); }
 .toolbar-meta { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* -------------------------------------------------------------- memories */
